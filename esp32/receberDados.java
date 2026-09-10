@@ -1,5 +1,7 @@
 //PSEUDOCODIGO - API JARDIM SENTINELA
 
+public class void API (String argv[],
+
 void receberDados(){
 
     //validar dados recebidos
