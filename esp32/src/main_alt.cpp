@@ -1,23 +1,23 @@
 #define SIMULATION
-#include <Arduino.h> //framework Arduino (Não é definitiva)
-#include <LittleFS.h>  // sistema de arquivos na flash (armazenamento local)
+#include <Arduino.h>
+#include <LittleFS.h>
+#include <time.h>
 #include <atomic>
 
 // Compile com -DSIMULATION no Wokwi (build_flags no platformio.ini) para
 // injetar ruído nas leituras e encurtar o período do snapshot.
 
-// ===== CONFIGURAÇÃO (edite aqui) =============================================
-static const char* JARDIM_ID = "jardim-proto-01";  // identifica este protótipo
+// ===== CONFIGURAÇÃO ==========================================================
+static const char* JARDIM_ID = "jardim-centro-01";  // Conforme contrato de telemetria
 
-// Sensores em ordem CRESCENTE de altura (índice 0 = mais baixo).
-// Para 4 sensores: PINO_LEITURA {32,33,34,35}, PINO_ENERGIA {25,26,27,14},
-// ALTURA_CM {5,10,15,20}. GPIO34/35 são só de entrada: nunca usar como energia.
+// Sensores resistivos T1592 em ordem CRESCENTE de altura (índice 0 = mais baixo).
+// Wokwi: 3 potenciômetros em GPIO32, GPIO33, GPIO34 com alimentação em GPIO25, GPIO26, GPIO27.
 constexpr uint8_t N_SENSORES = 3;
 constexpr uint8_t PINO_LEITURA[N_SENSORES] = {32, 33, 34};
 constexpr uint8_t PINO_ENERGIA[N_SENSORES] = {25, 26, 27};
 constexpr float   ALTURA_CM[N_SENSORES]    = {5.0f, 10.0f, 15.0f};
 
-// Limiares (ADC 0-4095), calibrar por unidade. Histerese evita oscilar.
+// Limiares (ADC 0-4095) com histerese para evitar oscilações na borda.
 constexpr uint16_t LIMIAR_MOLHA[N_SENSORES] = {1500, 1500, 1500};
 constexpr uint16_t LIMIAR_SECA[N_SENSORES]  = {1000, 1000, 1000};
 
@@ -25,8 +25,9 @@ constexpr uint32_t PERIODO_AMOSTRA_MS   = 100;
 constexpr uint8_t  AMOSTRAS_CONFIRMACAO = 3;
 constexpr uint32_t SETTLE_US            = 500;
 constexpr size_t   MAX_BYTES_FILA       = 64 * 1024;
+constexpr uint8_t  BATERIA_PADRAO       = 100;  // 0 a 100 conforme contrato
 
-// Snapshot periódico com o estado completo (heartbeat + recuperação de estado).
+// Snapshot periódico (heartbeat).
 #ifdef SIMULATION
 constexpr uint32_t PERIODO_SNAPSHOT_MS = 5000;
 #else
@@ -37,23 +38,29 @@ static const char* ARQ_FILA = "/fila.ndjson";
 
 // ===== ESTADO GLOBAL =========================================================
 
-// tipo SNAPSHOT: estado de todos os sensores (mascara, bit i = sensor i molhado).
-// tipo EVENTO: um sensor mudou de estado.
 struct Evento {
   bool     snapshot;
-  uint8_t  sensor;    // só em EVENTO
-  bool     molhado;   // só em EVENTO
-  uint8_t  mascara;   // estado de todos após o evento/snapshot
-  float    nivelCm;   // altura do patamar mais alto molhado (0 se nenhum)
-  uint32_t seq;       // atribuído na amostragem: lacuna na sequência = perda
-  uint32_t tMs;       // millis() no primeiro cruzamento (evento) ou no snapshot
+  uint8_t  sensor;
+  float    nivelAgua;
+  uint32_t deltaTMs;
+  uint32_t tMs;
 };
 
 QueueHandle_t filaEventos;
-uint32_t bootId;
-std::atomic<uint32_t> descartados{0};  // fila cheia, arquivo cheio ou erro de arquivo
+std::atomic<uint32_t> descartados{0};
 
-// ===== SENSORES ==============================================================
+// ===== FUNÇÕES AUXILIARES ====================================================
+
+static void formatarTimestamp(uint32_t ms, char* buffer, size_t tamanho) {
+  time_t now = time(nullptr);
+  if (now < 100000) {
+    // Sem sincronização NTP prévia (Etapa 1): marco de referência em 2026-10-15T00:00:00Z
+    now = 1792022400 + (ms / 1000);
+  }
+  struct tm tmInfo;
+  gmtime_r(&now, &tmInfo);
+  strftime(buffer, tamanho, "%Y-%m-%dT%H:%M:%SZ", &tmInfo);
+}
 
 uint16_t lerSensor(uint8_t i) {
   digitalWrite(PINO_ENERGIA[i], HIGH);
@@ -63,26 +70,18 @@ uint16_t lerSensor(uint8_t i) {
   digitalWrite(PINO_ENERGIA[i], LOW);
   uint16_t raw = soma / 4;
 #ifdef SIMULATION
-  // Pico esporádico (~2% das leituras) para exercitar o debounce, que com
-  // potenciômetro nunca seria testado.
+  // Pico esporádico (~2% das leituras) para exercitar o debounce
   if (esp_random() % 100 < 2) raw = (raw > 2000) ? raw - 1500 : raw + 1500;
 #endif
   return raw;
 }
 
-static uint8_t mascaraDe(const bool* estado) {
-  uint8_t m = 0;
-  for (uint8_t i = 0; i < N_SENSORES; i++) if (estado[i]) m |= (1u << i);
-  return m;
-}
-
 static float nivelDe(const bool* estado) {
-  float n = 0;
+  float n = 0.0f;
   for (uint8_t i = 0; i < N_SENSORES; i++) if (estado[i]) n = ALTURA_CM[i];
   return n;
 }
 
-// Envia à fila; se estiver cheia, conta o descarte (antes era silencioso).
 static void enviar(const Evento& e) {
   if (xQueueSend(filaEventos, &e, 0) != pdTRUE) descartados++;
 }
@@ -91,14 +90,13 @@ void tarefaAmostragem(void*) {
   bool estado[N_SENSORES];
   uint8_t cont[N_SENSORES] = {0};
   uint32_t tPrimeiro[N_SENSORES] = {0};
-  uint32_t seqLocal = 0;
+  uint32_t tUltimoPatamar = 0;
 
-  // Estado inicial LIDO, não assumido: se o jardim já está molhado no boot,
-  // o primeiro snapshot já reflete isso.
+  // Estado inicial lido dos sensores
   for (uint8_t i = 0; i < N_SENSORES; i++) {
     estado[i] = lerSensor(i) > (LIMIAR_MOLHA[i] + LIMIAR_SECA[i]) / 2;
   }
-  uint32_t proxSnap = millis();  // snapshot imediato
+  uint32_t proxSnap = millis();
   TickType_t ultimo = xTaskGetTickCount();
 
   for (;;) {
@@ -112,13 +110,29 @@ void tarefaAmostragem(void*) {
       if (++cont[i] >= AMOSTRAS_CONFIRMACAO) {
         estado[i] = !estado[i];
         cont[i] = 0;
-        Evento e{false, i, estado[i], mascaraDe(estado), nivelDe(estado), seqLocal++, tPrimeiro[i]};
+
+        uint32_t dt = 0;
+        if (estado[i]) {
+          // Subida de nível: registra tempo entre patamares (Δt = tJS - tcontrole)
+          if (tUltimoPatamar > 0 && tPrimeiro[i] >= tUltimoPatamar) {
+            dt = tPrimeiro[i] - tUltimoPatamar;
+          }
+          tUltimoPatamar = tPrimeiro[i];
+        } else if (nivelDe(estado) == 0.0f) {
+          tUltimoPatamar = 0;
+        }
+
+        Evento e{false, i, nivelDe(estado), dt, tPrimeiro[i]};
         enviar(e);
       }
     }
 
     if ((int32_t)(millis() - proxSnap) >= 0) {
-      Evento s{true, 0, false, mascaraDe(estado), nivelDe(estado), seqLocal++, millis()};
+      uint8_t sensAtivo = 0;
+      for (int8_t i = N_SENSORES - 1; i >= 0; i--) {
+        if (estado[i]) { sensAtivo = i; break; }
+      }
+      Evento s{true, sensAtivo, nivelDe(estado), 0, millis()};
       enviar(s);
       proxSnap += PERIODO_SNAPSHOT_MS;
     }
@@ -138,20 +152,24 @@ void persistir(const Evento& e) {
     return;
   }
 
-  char linha[200];
-  if (e.snapshot) {
-    snprintf(linha, sizeof(linha),
-      "{\"tipo\":\"snapshot\",\"idJardim\":\"%s\",\"mascara\":%u,\"nivelCm\":%.1f,\"bootId\":%lu,\"seq\":%lu,\"tMs\":%lu}",
-      JARDIM_ID, e.mascara, e.nivelCm,
-      (unsigned long)bootId, (unsigned long)e.seq, (unsigned long)e.tMs);
-  } else {
-    snprintf(linha, sizeof(linha),
-      "{\"tipo\":\"evento\",\"idJardim\":\"%s\",\"idSensor\":\"S%u\",\"molhado\":%s,\"mascara\":%u,\"nivelCm\":%.1f,\"bootId\":%lu,\"seq\":%lu,\"tMs\":%lu}",
-      JARDIM_ID, e.sensor + 1, e.molhado ? "true" : "false", e.mascara, e.nivelCm,
-      (unsigned long)bootId, (unsigned long)e.seq, (unsigned long)e.tMs);
-  }
+  char ts[25];
+  formatarTimestamp(e.tMs, ts, sizeof(ts));
+
+  char idSensor[16];
+  snprintf(idSensor, sizeof(idSensor), "sensor-%02u", e.sensor + 1);
+
+  char linha[160];
+  snprintf(linha, sizeof(linha),
+    "{\"idJardim\":\"%s\",\"idSensor\":\"%s\",\"nivelAgua\":%.1f,\"bateria\":%u,\"timestamp\":\"%s\"}",
+    JARDIM_ID, idSensor, e.nivelAgua, BATERIA_PADRAO, ts);
+
   f.println(linha);
   f.close();
+
+  if (!e.snapshot) {
+    Serial.printf("[LIMIAR] Sensor: %s | nivelAgua: %.1f cm | Delta t: %lu ms | Timestamp: %s\n",
+                  idSensor, e.nivelAgua, (unsigned long)e.deltaTMs, ts);
+  }
   Serial.println(linha);
 }
 
@@ -175,7 +193,6 @@ void limparFila() {
 
 void setup() {
   Serial.begin(115200);
-  bootId = esp_random();
 
   for (uint8_t i = 0; i < N_SENSORES; i++) {
     pinMode(PINO_ENERGIA[i], OUTPUT);
