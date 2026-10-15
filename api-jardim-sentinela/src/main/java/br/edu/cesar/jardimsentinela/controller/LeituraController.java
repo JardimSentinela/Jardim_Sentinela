@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import br.edu.cesar.jardimsentinela.dto.LeituraRequest;
+import jakarta.validation.Valid;
 
 @RestController
 public class LeituraController {
@@ -17,7 +18,7 @@ public class LeituraController {
     }
 
     @PostMapping("/api/leituras")
-    public ResponseEntity<Void> receberLeitura(@RequestBody LeituraRequest leitura) {
+    public ResponseEntity<Void> receberLeitura(@Valid @RequestBody LeituraRequest leitura) {
         System.out.println("Leitura recebida: " + leitura);
         return ResponseEntity.accepted().build();
     }
