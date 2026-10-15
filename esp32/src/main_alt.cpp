@@ -1,3 +1,4 @@
+#define SIMULATION
 #include <Arduino.h> //framework Arduino (Não é definitiva)
 #include <LittleFS.h>  // sistema de arquivos na flash (armazenamento local)
 #include <atomic>
