@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <Preferences.h>
 #if __has_include("secrets.h")
 #include "secrets.h"          // ignorado pelo git: URL, SSID e senha
 #else
@@ -72,6 +73,12 @@ constexpr uint32_t NTP_TIMEOUT_MS      = 10000;  // espera máxima pelo NTP
 
 static const char* ARQ_FILA = "/fila.ndjson";
 static const char* ARQ_TMP  = "/fila.tmp";   // arquivo temporário da compactação
+
+// NVS do cursor de confirmação (INC 4): último (bootId, seq) confirmado com 2xx.
+static const char* NVS_ESPACO    = "envio";
+static const char* NVS_ACK_BOOT  = "ackBoot";
+static const char* NVS_ACK_SEQ   = "ackSeq";
+constexpr uint32_t PAUSA_FALHA_MS = 5000;  // pausa fixa provisória; INC 5 põe backoff
 
 // Buffer da linha JSON: a linha mais longa é a de boot (~236 bytes com origem).
 constexpr size_t   TAMANHO_LINHA         = 320;
@@ -143,6 +150,14 @@ static ContadoresEnvio g_envio = {0, 0, 0};
 enum EstadoWifi : uint8_t { WIFI_OCIOSO, WIFI_CONECTANDO, WIFI_CONECTADO };
 static EstadoWifi g_wifi = WIFI_OCIOSO;
 static uint32_t    g_wifiMarcMs = 0;
+
+static bool     g_offline = false;            // comando 'o': não tenta rede
+static bool     g_temPendente = false;         // há linha ainda não confirmada
+static uint32_t g_proximaTentativaMs = 0;      // pausa após falha de envio
+static char     g_ackBootId[9] = {0};          // cursor: último 2xx confirmado
+static uint32_t g_ackSeq = 0;
+static bool     g_ackValido = false;
+static uint32_t g_reancoragens = 0;            // cursor sumiu (compactação): recomeçou
 
 // Estado da hora (INC 3): NTP e header Date são tentados sem bloquear o loop.
 static bool     g_ntpIniciado = false;
@@ -606,8 +621,70 @@ void limparFila() {
   Serial.println("Arquivo apagado.");
 }
 
+// ===== CURSOR DE CONFIRMACAO (INC 4) =========================================
+
+// Carrega o cursor da NVS no boot. Ausente = nada foi confirmado ainda.
+static void carregarCursor() {
+  Preferences p;
+  if (!p.begin(NVS_ESPACO, true)) return;
+  String boot = p.getString(NVS_ACK_BOOT, "");
+  g_ackSeq = p.getUInt(NVS_ACK_SEQ, 0);
+  p.end();
+  if (boot.length() != 8) return;
+  memcpy(g_ackBootId, boot.c_str(), 8);
+  g_ackBootId[8] = '\0';
+  g_ackValido = true;
+}
+
+// Lê uma linha do arquivo sem o LF; false no fim. Linha maior que o buffer é
+// truncada, mas o excedente é descartado até o LF.
+static bool lerLinha(File& f, char* buffer, size_t tamanho) {
+  size_t n = 0;
+  while (f.available()) {
+    int c = f.read();
+    if (c < 0 || c == '\n') break;
+    if (n < tamanho - 1) buffer[n++] = (char)c;
+  }
+  buffer[n] = '\0';
+  return n > 0;
+}
+
+// Extrai (bootId, seq) de uma linha gravada; linha parcial/inválida é ignorada.
+static bool extrairChave(const char* linha, char* bootId, uint32_t* seq) {
+  const char* p = strstr(linha, "\"bootId\":\"");
+  if (!p || strlen(p + 10) < 8) return false;
+  memcpy(bootId, p + 10, 8);
+  bootId[8] = '\0';
+  p = strstr(linha, "\"seq\":");
+  if (!p) return false;
+  *seq = (uint32_t)strtoul(p + 6, nullptr, 10);
+  return true;
+}
+
+// Conta o que ainda não foi confirmado pela mesma regra da varredura. Se o
+// cursor não existir no arquivo, conta tudo (o envio vai reancorar).
+static uint32_t contarPendentes() {
+  File f = LittleFS.open(ARQ_FILA, "r");
+  if (!f) return 0;
+  char linha[TAMANHO_LINHA + 16];
+  char boot[9];
+  uint32_t seq = 0, total = 0, depois = 0;
+  bool cursorAchado = !g_ackValido;
+  while (lerLinha(f, linha, sizeof(linha))) {
+    if (!extrairChave(linha, boot, &seq)) continue;
+    total++;
+    if (!cursorAchado) {
+      if (strcmp(boot, g_ackBootId) == 0 && seq == g_ackSeq) cursorAchado = true;
+      continue;
+    }
+    depois++;
+  }
+  f.close();
+  return cursorAchado ? depois : total;
+}
+
 // Comando 'i': estado do arquivo e contadores do envio. "pendentes" é o que
-// ainda não foi confirmado; sem cursor (INC 4) nada está confirmado ainda.
+// ainda não foi confirmado; o cursor identifica o último 2xx (bootId/seq).
 void imprimirDiagnostico() {
   File f = LittleFS.open(ARQ_FILA, "r");
   size_t bytes = 0;
@@ -618,12 +695,17 @@ void imprimirDiagnostico() {
     linhas = contarLinhasNoPrefixo(f, bytes);
     f.close();
   }
-  uint32_t pendentes = (linhas > g_envio.confirmados) ? (linhas - g_envio.confirmados) : 0;
+  char cursor[24];
+  if (g_ackValido) snprintf(cursor, sizeof(cursor), "%s/%lu", g_ackBootId, (unsigned long)g_ackSeq);
+  else snprintf(cursor, sizeof(cursor), "sem cursor");
   Serial.println("--- DIAGNOSTICO ---");
   Serial.printf("arquivo: %s\n", existe ? "existe" : "inexistente");
   Serial.printf("bytes: %u\n", (unsigned)bytes);
   Serial.printf("linhas: %lu\n", (unsigned long)linhas);
-  Serial.printf("pendentes: %lu\n", (unsigned long)pendentes);
+  Serial.printf("pendentes: %lu\n", (unsigned long)contarPendentes());
+  Serial.printf("cursor: %s\n", cursor);
+  Serial.printf("reancoragens: %lu\n", (unsigned long)g_reancoragens);
+  Serial.printf("offline: %s\n", g_offline ? "sim" : "nao");
   Serial.printf("tentativas: %lu\n", (unsigned long)g_envio.tentativas);
   Serial.printf("confirmados: %lu\n", (unsigned long)g_envio.confirmados);
   Serial.printf("falhas: %lu\n", (unsigned long)g_envio.falhas);
@@ -633,16 +715,6 @@ void imprimirDiagnostico() {
 }
 
 // ===== REDE E ENVIO ==========================================================
-
-// Monta o payload com o MESMO formatador usado no arquivo, para o POST levar
-// exatamente os campos gravados (origem, horaSincronizada, seq, bootId).
-static void montarPayload(const Evento& e, char* buffer, size_t tamanho) {
-  char ts[25];
-  char idSensor[16];
-  formatarTimestamp(e.tMs, e.relogioValido, ts, sizeof(ts));
-  formatarIdSensor(e, idSensor, sizeof(idSensor));
-  montarLinha(e, ts, idSensor, buffer, tamanho);
-}
 
 // Inicia a conexão sem esperar: quem acompanha é o loop, tick a tick.
 static void wifiIniciar() {
@@ -685,17 +757,14 @@ static void atualizarWifi() {
   }
 }
 
-// Posta UM registro no receptor. Bloqueia no máximo HTTP_TIMEOUT_MS; a
-// amostragem roda em prioridade maior e mantém seu período de 100 ms.
-static bool postarRegistro(const Evento& e) {
+// Posta UMA linha já gravada no receptor, sem remontar o JSON (timestamp e
+// campos ficam idênticos ao arquivo). Bloqueia no máximo HTTP_TIMEOUT_MS.
+static bool postarLinha(const char* linha) {
   if (strlen(URL_RECEPTOR) == 0) {
     static bool avisouUrl = false;
     if (!avisouUrl) { Serial.println("HTTP: URL_RECEPTOR vazia (preencha secrets.h)"); avisouUrl = true; }
     return false;
   }
-
-  char payload[TAMANHO_LINHA];
-  montarPayload(e, payload, sizeof(payload));
 
   WiFiClientSecure cliente;
   // LIMITAÇÃO: o gateway do Wokwi não entrega a cadeia de certificados; a
@@ -710,7 +779,7 @@ static bool postarRegistro(const Evento& e) {
     return false;
   }
   http.addHeader("Content-Type", "application/json");
-  int codigo = http.POST((uint8_t*)payload, strlen(payload));
+  int codigo = http.POST((uint8_t*)linha, strlen(linha));
   // Primeiro 2xx sem hora confiável: guarda o Date para aplicar se o NTP falhar.
   if (codigo >= 200 && codigo < 300 && !relogioValido() && g_epochHttp == 0) {
     String data = http.header("Date");
@@ -722,24 +791,102 @@ static bool postarRegistro(const Evento& e) {
   }
   http.end();
   if (codigo > 0) {
-    Serial.printf("HTTP: codigo %d, %u bytes\n", codigo, (unsigned)strlen(payload));
+    Serial.printf("HTTP: codigo %d, %u bytes\n", codigo, (unsigned)strlen(linha));
   } else {
     Serial.printf("HTTP: falha %d\n", codigo);
   }
   return codigo >= 200 && codigo < 300;
 }
 
-// Entrega o registro ao transporte. Offline, devolve false na hora e o dado
-// continua no arquivo; o cursor de confirmação entra no INC 4.
-static bool enviarRegistro(const Evento& e) {
+// Entrega uma linha ao transporte. Offline devolve false na hora ('o'), sem rede.
+static bool enviarRegistro(const char* linha) {
+  if (g_offline) return false;
   if (g_wifi != WIFI_CONECTADO) return false;
   g_envio.tentativas++;
-  if (postarRegistro(e)) {
-    g_envio.confirmados++;
-    return true;
-  }
+  if (postarLinha(linha)) return true;
   g_envio.falhas++;
   return false;
+}
+
+// Procura a primeira linha depois do cursor. Devolve 1 com a linha e a chave;
+// 0 se não há pendente. Se o cursor sumiu (compactação), reancora no início.
+static int buscarPendente(char* alvo, size_t tam, char* bootAlvo, uint32_t* seqAlvo) {
+  File f = LittleFS.open(ARQ_FILA, "r");
+  if (!f) return 0;
+  char linha[TAMANHO_LINHA + 16];
+  char primeira[TAMANHO_LINHA + 16];
+  char boot[9];
+  uint32_t seq = 0;
+  bool temPrimeira = false;
+  bool cursorAchado = !g_ackValido;
+  bool achou = false;
+
+  while (lerLinha(f, linha, sizeof(linha))) {
+    if (!extrairChave(linha, boot, &seq)) continue;
+    if (!temPrimeira) {
+      strncpy(primeira, linha, sizeof(primeira) - 1);
+      primeira[sizeof(primeira) - 1] = '\0';
+      temPrimeira = true;
+    }
+    if (cursorAchado) {
+      strncpy(alvo, linha, tam - 1);
+      alvo[tam - 1] = '\0';
+      memcpy(bootAlvo, boot, 9);
+      *seqAlvo = seq;
+      achou = true;
+      break;
+    }
+    if (strcmp(boot, g_ackBootId) == 0 && seq == g_ackSeq) cursorAchado = true;
+  }
+  f.close();
+
+  if (achou) return 1;
+  if (g_ackValido && !cursorAchado && temPrimeira) {
+    strncpy(alvo, primeira, tam - 1);
+    alvo[tam - 1] = '\0';
+    if (!extrairChave(alvo, bootAlvo, seqAlvo)) return 0;
+    g_reancoragens++;
+    Serial.println("ENVIO: cursor nao encontrado; reancorando no inicio");
+    return 1;
+  }
+  return 0;
+}
+
+// Avança o cursor só depois do 2xx e grava na NVS. Duplicata é aceitável.
+static void confirmarCursor(const char* bootId, uint32_t seq) {
+  memcpy(g_ackBootId, bootId, 8);
+  g_ackBootId[8] = '\0';
+  g_ackSeq = seq;
+  g_ackValido = true;
+  g_envio.confirmados++;
+  Preferences p;
+  if (!p.begin(NVS_ESPACO, false)) { Serial.println("NVS: falha ao gravar cursor"); return; }
+  p.putString(NVS_ACK_BOOT, g_ackBootId);
+  p.putUInt(NVS_ACK_SEQ, g_ackSeq);
+  p.end();
+}
+
+// Tenta enviar o próximo pendente. Sem pendente, libera a varredura; em falha,
+// espera PAUSA_FALHA_MS (o backoff exponencial entra no INC 5).
+static void tentarEnviarPendente() {
+  char linha[TAMANHO_LINHA + 16];
+  char boot[9];
+  uint32_t seq = 0;
+  if (buscarPendente(linha, sizeof(linha), boot, &seq) != 1) {
+    g_temPendente = false;
+    return;
+  }
+  if (!enviarRegistro(linha)) {
+    g_proximaTentativaMs = millis() + PAUSA_FALHA_MS;
+    return;
+  }
+  confirmarCursor(boot, seq);
+}
+
+// Comando 'o': alterna o modo offline lógico; o arquivo continua crescendo.
+static void alternarOffline() {
+  g_offline = !g_offline;
+  Serial.printf("ENVIO: modo %s\n", g_offline ? "offline (nao envia)" : "online");
 }
 
 // Loga no boot se a fila antiga existe, quantos bytes tem e se o relógio é
@@ -752,7 +899,10 @@ static void logarEstadoBoot() {
   Serial.printf("BOOT: filaExiste=%s bytes=%u bootId=%s relogio=%s\n",
                 existe ? "sim" : "nao", (unsigned)bytes, g_bootId,
                 relogioValido() ? "valido" : "invalido");
-  Serial.printf("ENVIO: urlConfigurada=%s\n", strlen(URL_RECEPTOR) > 0 ? "sim" : "nao");
+  char cursor[24];
+  if (g_ackValido) snprintf(cursor, sizeof(cursor), "%s/%lu", g_ackBootId, (unsigned long)g_ackSeq);
+  else snprintf(cursor, sizeof(cursor), "sem");
+  Serial.printf("ENVIO: urlConfigurada=%s cursor=%s\n", strlen(URL_RECEPTOR) > 0 ? "sim" : "nao", cursor);
 }
 
 // ===== INICIALIZAÇÃO E LOOP PRINCIPAL ========================================
@@ -775,6 +925,9 @@ void setup() {
   snprintf(g_bootId, sizeof(g_bootId), "%08X", (unsigned)esp_random());
   g_seq = 0;
 
+  // Cursor de confirmação persistido na NVS: evita reenviar após um reset.
+  carregarCursor();
+
   // Relógio: o NTP começa quando o Wi-Fi conectar (iniciarSincronizacaoNtp).
   // Enquanto isso, as linhas saem com horaSincronizada:false e hora de fallback.
 
@@ -783,6 +936,9 @@ void setup() {
 
   // Wi-Fi em segundo plano: o setup não espera a conexão terminar.
   wifiIniciar();
+
+  // Há arquivo antigo? Então pode haver linha não confirmada para drenar.
+  g_temPendente = LittleFS.exists(ARQ_FILA);
 
   filaEventos = xQueueCreate(32, sizeof(Evento));
   xTaskCreatePinnedToCore(tarefaAmostragem, "amostra", 4096, nullptr, 3, nullptr, 1);
@@ -793,12 +949,9 @@ void loop() {
   atualizarHora();
 
   Evento e;
-  bool temParaEnviar = false;
-  Evento ultimoGravado;
   while (xQueueReceive(filaEventos, &e, 0) == pdTRUE) {
     persistir(e);
-    ultimoGravado = e;
-    temParaEnviar = true;
+    g_temPendente = true;
   }
 
   while (Serial.available()) {
@@ -806,11 +959,15 @@ void loop() {
     if (c == 'd') despejarFila();
     else if (c == 'L') limparFila();
     else if (c == 'i') imprimirDiagnostico();
+    else if (c == 'o') alternarOffline();
   }
 
-  // PONTO DE EXTENSÃO (envio): entrega ao transporte o último registro gravado.
-  // O INC 2 troca o stub por HTTPS; a varredura por cursor entra no INC 4.
-  if (temParaEnviar) enviarRegistro(ultimoGravado);
+  // ENVIO (INC 4): varre o arquivo e manda o próximo não confirmado. Offline
+  // ou sem Wi-Fi não tenta; falha impõe pausa fixa (o backoff entra no INC 5).
+  if (g_temPendente && !g_offline && g_wifi == WIFI_CONECTADO &&
+      (int32_t)(millis() - g_proximaTentativaMs) >= 0) {
+    tentarEnviarPendente();
+  }
 
   // Sem delay(): o loop não bloqueia (critério 12). A amostragem tem
   // prioridade maior (3) e mantém seu período de 100 ms.

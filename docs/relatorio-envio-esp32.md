@@ -62,7 +62,8 @@ evento:   242 bytes (com LF) -> JSON valido
 
 ### Observações
 
-- `pendentes` é derivado do arquivo; sem cursor (INC 4) ele é igual a `linhas`.
+- `pendentes` era derivado do arquivo; sem cursor (INC 4) ele era igual a `linhas`.
+  A partir do INC 4, `pendentes` é contado a partir do cursor confirmado.
 - Loop em busy-wait: `CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1` não está setado e
   `loopTaskWDTEnabled=false`, então não há panic de watchdog. Custo: CPU do core 1
   em 100% e consumo maior no hardware real.
@@ -206,3 +207,88 @@ texto invalido -> rejeitou (ok)
 - Só o **primeiro** 2xx fornece o `Date`.
 - `settimeofday` pode causar um salto no relógio; registros antigos não são
   reescritos porque carregam `relogioValido` e `tMs` da criação.
+
+## INC 4 — Modo offline e cursor de confirmação
+
+### Mudanças em `esp32/src/main_alt.cpp` (+193 / −36; líquido +157)
+
+- Comando `'o'` alterna o modo offline lógico (`g_offline`). Com ele ativo,
+  `enviarRegistro` devolve `false` na hora e nenhuma conexão é aberta; o arquivo
+  continua crescendo normalmente.
+- Cursor de confirmação `(ackBootId, ackSeq)` persistido na NVS
+  (`Preferences`, namespace `envio`), carregado no `setup()` e gravado
+  **somente depois de um 2xx**. Falha de energia entre o 2xx e a gravação
+  resulta em reenvio (duplicata), nunca em perda.
+- A cada tentativa, o firmware varre `/fila.ndjson`, pula até a linha do cursor
+  e envia **a linha seguinte**. Linhas confirmadas não são apagadas nem
+  reescritas; o cursor é identidade `(bootId, seq)`, não offset de byte.
+- O POST passou a enviar a linha já gravada (`postarLinha`), sem remontar o
+  JSON. Isso preserva exatamente o timestamp e o `horaSincronizada` da criação
+  (o `montarPayload` do INC 2 foi removido).
+- Cursor não encontrado no arquivo (compactação ou `'L'`): reancora no início,
+  incrementa `reancoragens` e loga `ENVIO: cursor nao encontrado; reancorando
+  no inicio`. Pode duplicar, mas não perde.
+- `'i'` passou a mostrar `cursor`, `pendentes` (recontados a partir do cursor),
+  `reancoragens` e `offline`.
+- Falha de envio impõe uma pausa fixa de 5 s (`PAUSA_FALHA_MS`), provisória até
+  o backoff exponencial do INC 5. Sem ela, um 429 do receptor viraria laço
+  apertado de tentativas.
+
+### O que não mudou
+
+Amostragem, histerese, períodos, limiares, pinos, `persistir`, compactação,
+formato do arquivo, `'d'`, `'L'`, branch LoRa do `SIMULATION` e o parser de hora.
+
+### Evidência
+
+Build limpo:
+
+```
+RAM:   [=         ]  14.5% (used 47556 bytes from 327680 bytes)
+Flash: [========  ]  76.1% (used 997405 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+Teste de host com as funções **extraídas do firmware** (`lerLinha`,
+`extrairChave`, `contarPendentes`, `buscarPendente`), simulando o arquivo:
+
+```
+arquivo vazio                          alvo=-1 pendentes=0 OK
+sem cursor -> primeiro (0), 5 pend.    alvo=0 pendentes=5 OK
+cursor A/1 -> proximo (2), 3 pend.     alvo=2 pendentes=3 OK
+cursor na ultima -> nada, 0 pend.      alvo=-1 pendentes=0 OK
+cursor sumido -> reancora (0), 5 pend. alvo=0 pendentes=5 OK
+  reancoragens: 0 -> 1 OK
+linha truncada no fim e ignorada       alvo=0 pendentes=5 OK
+TODOS OS CASOS OK
+```
+
+### Como testar no Wokwi
+
+1. `'o'` → `ENVIO: modo offline (nao envia)`. Esperar ~2 min: o Webhook não
+   recebe nada e `'i'` mostra `bytes`/`pendentes` crescendo.
+2. `'o'` de novo → `ENVIO: modo online`. O backlog é drenado em ordem; `'i'`
+   mostra `cursor` avançando e `pendentes: 0` ao final.
+3. Reset (botão EN, sem parar a simulação) → `BOOT: ... cursor=...` e
+   `ENVIO: urlConfigurada=sim cursor=...`. O que já tinha 2xx não é reenviado;
+   só as linhas novas (e as que estavam pendentes) saem.
+4. Para exercitar a reancoragem: `'L'` apaga o arquivo mas preserva o cursor;
+   no próximo envio aparece `reancorando no inicio` e `reancoragens` sobe.
+
+Parar e reiniciar a simulação pode reinicializar a flash (LittleFS e NVS);
+para o teste de reset, usar o botão de reset dentro da sessão.
+
+### Riscos
+
+- Uma gravação na NVS por 2xx: no dreno de um backlog grande há muitas
+  escritas; aceitável para o volume atual, mas é desgaste de flash a observar.
+- A varredura é O(arquivo) por registro → O(n²) no dreno. Com o teto de 64 KB
+  isso é irrelevante no Wokwi; o INC 7 pode manter um offset em memória.
+- Se a compactação remover a linha do cursor e houver linhas não confirmadas
+  anteriores a ela, a reancoragem reenvia (duplicata) — não há perda.
+  `perdidosNãoConfirmados` fica para o INC 8, junto da contabilidade de perdas.
+- `'L'` não zera o cursor de propósito: a reancoragem cobre o caso sem apagar
+  a NVS.
+- O tamanho líquido ficou em +157 (levemente acima do teto de ~150) porque a
+  varredura, a NVS e o modo offline formam uma unidade testável; dividir
+  deixaria o cursor sem uso em uma das metades.
