@@ -3,6 +3,14 @@
 #include <LittleFS.h>
 #include <time.h>
 #include <atomic>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#if __has_include("secrets.h")
+#include "secrets.h"          // ignorado pelo git: URL, SSID e senha
+#else
+#include "secrets.example.h"  // placeholders: compila sem segredos
+#endif
 
 // Compile com -DSIMULATION no Wokwi (build_flags no platformio.ini) para
 // injetar ruído nas leituras e encurtar o período do snapshot.
@@ -52,6 +60,11 @@ constexpr uint32_t PERIODO_SNAPSHOT_MS = 5000;
 #else
 constexpr uint32_t PERIODO_SNAPSHOT_MS = 60000;
 #endif
+
+// Rede e envio (INC 2). Timeouts em ms; o loop consulta o estado sem esperar.
+constexpr uint32_t WIFI_TIMEOUT_MS     = 15000;  // desiste de conectar sem travar
+constexpr uint32_t WIFI_RETENTATIVA_MS = 30000;  // espera para tentar de novo
+constexpr uint32_t HTTP_TIMEOUT_MS     = 8000;   // conexão + resposta do POST
 
 static const char* ARQ_FILA = "/fila.ndjson";
 static const char* ARQ_TMP  = "/fila.tmp";   // arquivo temporário da compactação
@@ -121,6 +134,11 @@ struct ContadoresEnvio {
   uint32_t falhas;
 };
 static ContadoresEnvio g_envio = {0, 0, 0};
+
+// Estado do Wi-Fi, avançado por atualizarWifi() no loop (nunca bloqueia).
+enum EstadoWifi : uint8_t { WIFI_OCIOSO, WIFI_CONECTANDO, WIFI_CONECTADO };
+static EstadoWifi g_wifi = WIFI_OCIOSO;
+static uint32_t    g_wifiMarcMs = 0;
 
 // Contador de registros deste boot (atribuído só pela tarefa de amostragem,
 // que é a única que cria registros).
@@ -542,15 +560,102 @@ void imprimirDiagnostico() {
   Serial.printf("relogio: %s\n", relogioValido() ? "valido" : "invalido");
 }
 
-// Costura do envio (INC 1): ainda não há transporte, então o registro é
-// recusado e permanece no arquivo. O INC 2 liga o POST HTTPS aqui.
-static bool enviarRegistro(const Evento& e) {
-  (void)e;
-  static bool avisou = false;
-  if (!avisou) {
-    Serial.println("ENVIO: sem transporte (INC 1); registros ficam no arquivo");
-    avisou = true;
+// ===== REDE E ENVIO ==========================================================
+
+// Monta o payload com o MESMO formatador usado no arquivo, para o POST levar
+// exatamente os campos gravados (origem, horaSincronizada, seq, bootId).
+static void montarPayload(const Evento& e, char* buffer, size_t tamanho) {
+  char ts[25];
+  char idSensor[16];
+  formatarTimestamp(e.tMs, e.relogioValido, ts, sizeof(ts));
+  formatarIdSensor(e, idSensor, sizeof(idSensor));
+  montarLinha(e, ts, idSensor, buffer, tamanho);
+}
+
+// Inicia a conexão sem esperar: quem acompanha é o loop, tick a tick.
+static void wifiIniciar() {
+  Serial.println("WIFI: conectando...");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_SENHA);
+  g_wifi = WIFI_CONECTANDO;
+  g_wifiMarcMs = millis();
+}
+
+// Máquina de estados do Wi-Fi: só consulta status/millis, nunca bloqueia.
+static void atualizarWifi() {
+  switch (g_wifi) {
+    case WIFI_CONECTANDO:
+      if (WiFi.status() == WL_CONNECTED) {
+        IPAddress ip = WiFi.localIP();
+        g_wifi = WIFI_CONECTADO;
+        Serial.printf("WIFI: conectado em %lu ms, IP %u.%u.%u.%u\n",
+                      (unsigned long)(millis() - g_wifiMarcMs), ip[0], ip[1], ip[2], ip[3]);
+      } else if (millis() - g_wifiMarcMs >= WIFI_TIMEOUT_MS) {
+        WiFi.disconnect(true);
+        g_wifi = WIFI_OCIOSO;
+        g_wifiMarcMs = millis();
+        Serial.println("WIFI: timeout de 15 s; segue offline e tenta depois");
+      }
+      break;
+    case WIFI_CONECTADO:
+      if (WiFi.status() != WL_CONNECTED) {
+        g_wifi = WIFI_OCIOSO;
+        g_wifiMarcMs = millis();
+        Serial.println("WIFI: caiu; tentando reconectar");
+      }
+      break;
+    case WIFI_OCIOSO:
+    default:
+      if (millis() - g_wifiMarcMs >= WIFI_RETENTATIVA_MS) wifiIniciar();
+      break;
   }
+}
+
+// Posta UM registro no receptor. Bloqueia no máximo HTTP_TIMEOUT_MS; a
+// amostragem roda em prioridade maior e mantém seu período de 100 ms.
+static bool postarRegistro(const Evento& e) {
+  if (strlen(URL_RECEPTOR) == 0) {
+    static bool avisouUrl = false;
+    if (!avisouUrl) { Serial.println("HTTP: URL_RECEPTOR vazia (preencha secrets.h)"); avisouUrl = true; }
+    return false;
+  }
+
+  char payload[TAMANHO_LINHA];
+  montarPayload(e, payload, sizeof(payload));
+
+  WiFiClientSecure cliente;
+  // LIMITAÇÃO: o gateway do Wokwi não entrega a cadeia de certificados; a
+  // validação TLS fica desligada aqui. No hardware, trocar por setCACert().
+  cliente.setInsecure();
+
+  HTTPClient http;
+  http.setConnectTimeout(HTTP_TIMEOUT_MS);
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  if (!http.begin(cliente, String(URL_RECEPTOR))) {
+    Serial.println("HTTP: falha ao iniciar a requisicao");
+    return false;
+  }
+  http.addHeader("Content-Type", "application/json");
+  int codigo = http.POST((uint8_t*)payload, strlen(payload));
+  http.end();
+  if (codigo > 0) {
+    Serial.printf("HTTP: codigo %d, %u bytes\n", codigo, (unsigned)strlen(payload));
+  } else {
+    Serial.printf("HTTP: falha %d\n", codigo);
+  }
+  return codigo >= 200 && codigo < 300;
+}
+
+// Entrega o registro ao transporte. Offline, devolve false na hora e o dado
+// continua no arquivo; o cursor de confirmação entra no INC 4.
+static bool enviarRegistro(const Evento& e) {
+  if (g_wifi != WIFI_CONECTADO) return false;
+  g_envio.tentativas++;
+  if (postarRegistro(e)) {
+    g_envio.confirmados++;
+    return true;
+  }
+  g_envio.falhas++;
   return false;
 }
 
@@ -564,6 +669,7 @@ static void logarEstadoBoot() {
   Serial.printf("BOOT: filaExiste=%s bytes=%u bootId=%s relogio=%s\n",
                 existe ? "sim" : "nao", (unsigned)bytes, g_bootId,
                 relogioValido() ? "valido" : "invalido");
+  Serial.printf("ENVIO: urlConfigurada=%s\n", strlen(URL_RECEPTOR) > 0 ? "sim" : "nao");
 }
 
 // ===== INICIALIZAÇÃO E LOOP PRINCIPAL ========================================
@@ -592,11 +698,16 @@ void setup() {
   // Diagnóstico do boot, agora que o bootId já existe e o relógio foi tentado.
   logarEstadoBoot();
 
+  // Wi-Fi em segundo plano: o setup não espera a conexão terminar.
+  wifiIniciar();
+
   filaEventos = xQueueCreate(32, sizeof(Evento));
   xTaskCreatePinnedToCore(tarefaAmostragem, "amostra", 4096, nullptr, 3, nullptr, 1);
 }
 
 void loop() {
+  atualizarWifi();
+
   Evento e;
   bool temParaEnviar = false;
   Evento ultimoGravado;

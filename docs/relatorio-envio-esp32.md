@@ -101,18 +101,24 @@ Flash: [=======   ]  74.2% (used 971933 bytes from 1310720 bytes)
 ========================= [SUCCESS] =========================
 ```
 
-Receptor verificado com o **payload exato** do firmware (POST via `curl`, não pelo
-ESP32):
+**POST real do ESP32 observado** no Webhook.site (execução do usuário no Wokwi):
 
 ```
-HTTP 200
-metodo: POST | content-type: application/json
-corpo: {"tipo":"boot",...,"horaSincronizada":false,"origem":"simulacao"}
+49 requisicoes com User-Agent ESP32HTTPClient
+IP de origem do navegador; intervalo de ~5 s (snapshots)
+tamanhos: 209 e 210 bytes
+corpo (exemplo):
+{"tipo":"snapshot","idJardim":"jardim-centro-01","idSensor":"jardim","nivelAgua":15.0,
+"bateria":100,"timestamp":"2026-10-15T00:00:11Z","seq":3,"bootId":"6F8DE646",
+"horaSincronizada":false,"origem":"simulacao"}
 ```
 
-> **Pendente:** o POST **a partir do ESP32** não pôde ser observado nesta máquina —
-> o Wokwi CLI exige um token de CI (`WOKWI_CLI_TOKEN`) e o token local é de licença,
-> não de CI. A simulação no navegador (Wokwi) faz esse teste.
+**Sobre o HTTP 429:** não é falha do firmware. O token **anônimo** do Webhook.site
+aceita no máximo **50 requisições**; as 49 do ESP32 + 1 teste manual esgotaram a
+cota e o receptor passou a responder 429 (armazenando a requisição mesmo assim).
+Foi criado um token novo para o teste de 2xx. Para execuções longas (INC 7/8),
+usar um token de conta Webhook.site ou um receptor sem cota (ex.: `httpbin.org`,
+`ntfy.sh`), já verificados com HTTP 200.
 
 ### Como testar no Wokwi
 
@@ -123,4 +129,9 @@ corpo: {"tipo":"boot",...,"horaSincronizada":false,"origem":"simulacao"}
 5. Confira o corpo no Webhook.site.
 6. Para testar o timeout: use uma rede inválida; o log deve mostrar
    `WIFI: timeout de 15 s` e o firmware continua gravando snapshots.
+
+> **Cota do Webhook.site:** token anônimo aceita **50 requisições** e depois passa a
+> responder **429** (o corpo ainda é armazenado). Com snapshots a cada 5 s, isso dá
+> ~4 minutos. Para testes longos, usar token de conta ou receptor sem cota.
+> Um 429 **não** é falha do firmware: o INC 5 é que vai tratar esse código.
 
