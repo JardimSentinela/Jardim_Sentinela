@@ -1,2 +1,6 @@
 .pio
 .vscode/
+
+# Segredos locais: URL do receptor, SSID e senha. O exemplo versionado e
+# secrets.example.h; o arquivo real nunca entra no git.
+secrets.h
