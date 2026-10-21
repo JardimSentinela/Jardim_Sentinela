@@ -1,7 +1,10 @@
-#define SIMULATION
+#ifndef SIMULATION
+#define SIMULATION  // também vem de -DSIMULATION no platformio.ini; o guard evita o warning
+#endif
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <time.h>
+#include <sys/time.h>
 #include <atomic>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -65,6 +68,7 @@ constexpr uint32_t PERIODO_SNAPSHOT_MS = 60000;
 constexpr uint32_t WIFI_TIMEOUT_MS     = 15000;  // desiste de conectar sem travar
 constexpr uint32_t WIFI_RETENTATIVA_MS = 30000;  // espera para tentar de novo
 constexpr uint32_t HTTP_TIMEOUT_MS     = 8000;   // conexão + resposta do POST
+constexpr uint32_t NTP_TIMEOUT_MS      = 10000;  // espera máxima pelo NTP
 
 static const char* ARQ_FILA = "/fila.ndjson";
 static const char* ARQ_TMP  = "/fila.tmp";   // arquivo temporário da compactação
@@ -140,6 +144,13 @@ enum EstadoWifi : uint8_t { WIFI_OCIOSO, WIFI_CONECTANDO, WIFI_CONECTADO };
 static EstadoWifi g_wifi = WIFI_OCIOSO;
 static uint32_t    g_wifiMarcMs = 0;
 
+// Estado da hora (INC 3): NTP e header Date são tentados sem bloquear o loop.
+static bool     g_ntpIniciado = false;
+static uint32_t g_ntpInicioMs = 0;
+static bool     g_horaResolvida = false;   // já se sabe qual fonte venceu
+static bool     g_fallbackLogado = false;
+static time_t   g_epochHttp = 0;           // epoch do primeiro 2xx, se ainda sem hora
+
 // Contador de registros deste boot (atribuído só pela tarefa de amostragem,
 // que é a única que cria registros).
 static uint32_t g_seq = 0;
@@ -157,11 +168,72 @@ static bool relogioValido() {
   return time(nullptr) >= EPOCH_MINIMO_VALIDO;
 }
 
-// PONTO DE LIGAÇÃO DO NTP: quando houver Wi-Fi, ligar aqui o WiFi.begin() e o
-// configTime() (já existe no core: cores/esp32/esp32-hal-time.c). Enquanto
-// isso o relógio fica inválido e as linhas saem com "horaSincronizada":false.
+// PONTO DE LIGAÇÃO DO NTP (INC 3): programa o SNTP sem esperar resposta; o
+// loop checa time() e, se o NTP não vier em 10 s, usa o Date do primeiro 2xx.
 static void iniciarSincronizacaoNtp() {
-  // TODO: ligar WiFi + configTime(0, 0, "pool.ntp.org", ...) quando houver rede.
+  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  g_ntpIniciado = true;
+  g_ntpInicioMs = millis();
+  Serial.printf("HORA: ntp iniciado (timeout de %u s)\n", (unsigned)(NTP_TIMEOUT_MS / 1000));
+}
+
+// Converte o header Date (RFC 7231: "Wed, 21 Oct 2026 20:39:43 GMT") em epoch
+// UTC sem depender de timegm/TZ, que podem não existir no core.
+static bool parsearDataHttp(const char* texto, time_t* epoch) {
+  char semana[4] = {0}, mes[4] = {0};
+  int dia = 0, ano = 0, h = 0, m = 0, s = 0;
+  if (!texto) return false;
+  if (sscanf(texto, "%3s, %d %3s %d %d:%d:%d", semana, &dia, mes, &ano, &h, &m, &s) != 7) return false;
+  if (dia < 1 || dia > 31 || ano < 1970 || h > 23 || m > 59 || s > 60) return false;
+
+  static const char* MESES = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  const char* p = strstr(MESES, mes);
+  if (!p || ((p - MESES) % 3) != 0) return false;
+  int mi = (int)(p - MESES) / 3 + 1;  // 1..12
+
+  // Dias desde 1970-01-01 (algoritmo civil de Howard Hinnant).
+  int a = ano - (mi <= 2 ? 1 : 0);
+  int era = (a >= 0 ? a : a - 399) / 400;
+  unsigned yoe = (unsigned)(a - era * 400);
+  unsigned mp = (unsigned)(mi + (mi > 2 ? -3 : 9));
+  unsigned doy = (153u * mp + 2u) / 5u + (unsigned)(dia - 1);
+  unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+  long dias = (long)era * 146097L + (long)doe - 719468L;
+
+  *epoch = (time_t)dias * 86400 + h * 3600 + m * 60 + s;
+  return true;
+}
+
+// Aplica a hora do header Date (só quando o NTP não venceu) e loga a fonte.
+static void aplicarHoraHttp(time_t epoch) {
+  struct timeval tv;
+  tv.tv_sec = epoch;
+  tv.tv_usec = 0;
+  settimeofday(&tv, nullptr);
+  g_horaResolvida = true;
+  Serial.printf("HORA: fonte=http epoch=%ld%s\n", (long)epoch,
+                g_fallbackLogado ? " (venceu fallback)" : "");
+}
+
+// Acompanha a sincronização sem bloquear: NTP vence se chegar; senão aplica o
+// epoch capturado do primeiro 2xx após o timeout; sem nenhum, fica fallback.
+static void atualizarHora() {
+  if (g_horaResolvida) return;
+  if (relogioValido()) {
+    g_horaResolvida = true;
+    Serial.printf("HORA: fonte=ntp epoch=%ld\n", (long)time(nullptr));
+    return;
+  }
+  uint32_t base = g_ntpIniciado ? g_ntpInicioMs : 0;
+  bool expirou = (millis() - base >= NTP_TIMEOUT_MS);
+  if (g_epochHttp > 0 && expirou) {
+    aplicarHoraHttp(g_epochHttp);
+    return;
+  }
+  if (expirou && !g_fallbackLogado) {
+    g_fallbackLogado = true;
+    Serial.println("HORA: fonte=fallback (sem sync em 10 s; aguardando Date)");
+  }
 }
 
 // Converte o instante do evento (ms = millis() quando o evento aconteceu) para
@@ -590,6 +662,8 @@ static void atualizarWifi() {
         g_wifi = WIFI_CONECTADO;
         Serial.printf("WIFI: conectado em %lu ms, IP %u.%u.%u.%u\n",
                       (unsigned long)(millis() - g_wifiMarcMs), ip[0], ip[1], ip[2], ip[3]);
+        // Só faz sentido tentar NTP depois que há rede; configTime não bloqueia.
+        if (!g_ntpIniciado) iniciarSincronizacaoNtp();
       } else if (millis() - g_wifiMarcMs >= WIFI_TIMEOUT_MS) {
         WiFi.disconnect(true);
         g_wifi = WIFI_OCIOSO;
@@ -637,6 +711,15 @@ static bool postarRegistro(const Evento& e) {
   }
   http.addHeader("Content-Type", "application/json");
   int codigo = http.POST((uint8_t*)payload, strlen(payload));
+  // Primeiro 2xx sem hora confiável: guarda o Date para aplicar se o NTP falhar.
+  if (codigo >= 200 && codigo < 300 && !relogioValido() && g_epochHttp == 0) {
+    String data = http.header("Date");
+    time_t epoch = 0;
+    if (data.length() > 0 && parsearDataHttp(data.c_str(), &epoch)) {
+      g_epochHttp = epoch;
+      Serial.printf("HORA: Date capturado (%ld), aguardando timeout do ntp\n", (long)epoch);
+    }
+  }
   http.end();
   if (codigo > 0) {
     Serial.printf("HTTP: codigo %d, %u bytes\n", codigo, (unsigned)strlen(payload));
@@ -692,8 +775,8 @@ void setup() {
   snprintf(g_bootId, sizeof(g_bootId), "%08X", (unsigned)esp_random());
   g_seq = 0;
 
-  // Relógio: hoje não há NTP, então as linhas saem com horaSincronizada:false.
-  iniciarSincronizacaoNtp();
+  // Relógio: o NTP começa quando o Wi-Fi conectar (iniciarSincronizacaoNtp).
+  // Enquanto isso, as linhas saem com horaSincronizada:false e hora de fallback.
 
   // Diagnóstico do boot, agora que o bootId já existe e o relógio foi tentado.
   logarEstadoBoot();
@@ -707,6 +790,7 @@ void setup() {
 
 void loop() {
   atualizarWifi();
+  atualizarHora();
 
   Evento e;
   bool temParaEnviar = false;

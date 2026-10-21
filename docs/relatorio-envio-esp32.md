@@ -67,8 +67,6 @@ evento:   242 bytes (com LF) -> JSON valido
   `loopTaskWDTEnabled=false`, então não há panic de watchdog. Custo: CPU do core 1
   em 100% e consumo maior no hardware real.
 
----
-
 ## INC 2 — Transporte HTTPS
 
 ### Mudanças
@@ -120,6 +118,8 @@ Foi criado um token novo para o teste de 2xx. Para execuções longas (INC 7/8),
 usar um token de conta Webhook.site ou um receptor sem cota (ex.: `httpbin.org`,
 `ntfy.sh`), já verificados com HTTP 200.
 
+**200 confirmado** pelo usuário no Wokwi após a troca do token.
+
 ### Como testar no Wokwi
 
 1. Preencha `esp32/src/secrets.h` (SSID `Wokwi-GUEST`, senha vazia, URL do Webhook.site).
@@ -135,3 +135,74 @@ usar um token de conta Webhook.site ou um receptor sem cota (ex.: `httpbin.org`,
 > ~4 minutos. Para testes longos, usar token de conta ou receptor sem cota.
 > Um 429 **não** é falha do firmware: o INC 5 é que vai tratar esse código.
 
+
+## INC 3 — Hora
+
+### Mudanças
+
+| Item | Detalhe |
+|---|---|
+| `iniciarSincronizacaoNtp()` | Agora chama `configTime(0, 0, "pool.ntp.org", "time.google.com")` **sem esperar**; é chamada quando o Wi‑Fi conecta. `NTP_TIMEOUT_MS = 10000`. |
+| `parsearDataHttp()` | Converte o header `Date` (RFC 7231) em epoch UTC sem depender de `timegm`/TZ (algoritmo civil). |
+| `postarRegistro()` | No primeiro 2xx sem hora confiável, guarda o `Date` em `g_epochHttp` (não mexe no relógio ainda). |
+| `atualizarHora()` | Se `time()` ficar válido → `fonte=ntp`; se o NTP estourar o timeout e houver `Date` → `settimeofday` + `fonte=http`; sem nenhum → `fonte=fallback`. |
+| `setup()` | Não inicia mais o NTP antes da rede; o relógio segue inválido até sincronizar. |
+| Topo do arquivo | `#define SIMULATION` protegido por `#ifndef` (some o warning de redefinição). |
+
+`horaSincronizada` continua capturado **na criação** do registro (`relogioValido()`);
+o timestamp nunca é recalculado para outro regime depois. Registros criados antes
+do sync ficam com `false` e hora de fallback; depois, `true` e epoch real.
+
+### O que não mudou
+
+Amostragem, histerese, períodos, `persistir`, compactação, formato do arquivo,
+`'d'`, `'L'` e o transporte do INC 2.
+
+### Evidência
+
+Build sem warnings:
+
+```
+RAM:   [=         ]  14.5% (used 47476 bytes from 327680 bytes)
+Flash: [========  ]  75.7% (used 992209 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+Log real no Wokwi (fonte NTP venceu):
+
+```
+HORA: fonte=ntp epoch=1792617635
+```
+
+Teste do parser (função extraída do firmware e compilada no host):
+
+```
+Wed, 21 Oct 2026 20:39:43 GMT -> ok epoch=1792615183
+Thu, 01 Jan 1970 00:00:00 GMT -> ok epoch=0
+Tue, 29 Feb 2028 23:59:59 GMT -> ok epoch=1835481599
+Sat, 01 Mar 2025 00:00:00 GMT -> ok epoch=1740787200
+texto invalido -> rejeitou (ok)
+4/4 casos corretos
+```
+
+### Como testar
+
+1. Wokwi com Wi‑Fi: esperar `HORA: ntp iniciado (timeout de 10 s)` e depois
+   `HORA: fonte=ntp epoch=17...` (epoch > 1.700.000.000).
+2. Se o NTP não responder: após ~10 s aparece
+   `HORA: fonte=fallback (sem sync em 10 s; aguardando Date)` e, no 2xx seguinte,
+   `HORA: Date capturado (...)` + `HORA: fonte=http epoch=...`.
+3. Sem rede (SSID inválido): só `fonte=fallback`.
+4. `d`: a linha de boot (criada antes do sync) mantém `"horaSincronizada":false`
+   e timestamp `2026-10-15T...`; snapshots criados depois do sync saem
+   `"horaSincronizada":true` com a data real.
+5. `i`: `relogio: valido` após a sincronização.
+
+### Riscos
+
+- Depende de o gateway do Wokwi encaminhar UDP/123; se não, o caminho `http` entra.
+- O `Date` tem resolução de 1 s e vem do servidor; se o servidor estiver errado,
+  o firmware confia nele (é a única fonte disponível sem NTP).
+- Só o **primeiro** 2xx fornece o `Date`.
+- `settimeofday` pode causar um salto no relógio; registros antigos não são
+  reescritos porque carregam `relogioValido` e `tMs` da criação.
