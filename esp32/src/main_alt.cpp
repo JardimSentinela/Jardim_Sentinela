@@ -78,7 +78,6 @@ static const char* ARQ_TMP  = "/fila.tmp";   // arquivo temporário da compacta�
 static const char* NVS_ESPACO    = "envio";
 static const char* NVS_ACK_BOOT  = "ackBoot";
 static const char* NVS_ACK_SEQ   = "ackSeq";
-constexpr uint32_t PAUSA_FALHA_MS = 5000;  // pausa fixa provisória; INC 5 põe backoff
 
 // Buffer da linha JSON: a linha mais longa é a de boot (~236 bytes com origem).
 constexpr size_t   TAMANHO_LINHA         = 320;
@@ -154,6 +153,9 @@ static uint32_t    g_wifiMarcMs = 0;
 static bool     g_offline = false;            // comando 'o': não tenta rede
 static bool     g_temPendente = false;         // há linha ainda não confirmada
 static uint32_t g_proximaTentativaMs = 0;      // pausa após falha de envio
+static uint32_t g_falhasConsecutivas = 0;      // alimenta o backoff exponencial
+static uint32_t g_retryAfterSeg = 0;           // header Retry-After do último 429
+static char     g_ultimoErro[40] = "nenhum";   // aparece no comando 'i'
 static char     g_ackBootId[9] = {0};          // cursor: último 2xx confirmado
 static uint32_t g_ackSeq = 0;
 static bool     g_ackValido = false;
@@ -709,6 +711,9 @@ void imprimirDiagnostico() {
   Serial.printf("tentativas: %lu\n", (unsigned long)g_envio.tentativas);
   Serial.printf("confirmados: %lu\n", (unsigned long)g_envio.confirmados);
   Serial.printf("falhas: %lu\n", (unsigned long)g_envio.falhas);
+  Serial.printf("ultimoErro: %s\n", g_ultimoErro);
+  int32_t restante = (int32_t)(g_proximaTentativaMs - millis());
+  Serial.printf("proximoEnvioEm: %ld s\n", restante > 0 ? (long)(restante / 1000) : 0L);
   Serial.printf("descartados: %lu\n", (unsigned long)descartados.load());
   Serial.printf("bootId: %s\n", g_bootId);
   Serial.printf("relogio: %s\n", relogioValido() ? "valido" : "invalido");
@@ -758,12 +763,14 @@ static void atualizarWifi() {
 }
 
 // Posta UMA linha já gravada no receptor, sem remontar o JSON (timestamp e
-// campos ficam idênticos ao arquivo). Bloqueia no máximo HTTP_TIMEOUT_MS.
-static bool postarLinha(const char* linha) {
+// campos ficam idênticos ao arquivo). Devolve o código HTTP, ou negativo em
+// falha de configuração/transporte. Bloqueia no máximo HTTP_TIMEOUT_MS.
+static int postarLinha(const char* linha) {
+  g_retryAfterSeg = 0;
   if (strlen(URL_RECEPTOR) == 0) {
     static bool avisouUrl = false;
     if (!avisouUrl) { Serial.println("HTTP: URL_RECEPTOR vazia (preencha secrets.h)"); avisouUrl = true; }
-    return false;
+    return -2;
   }
 
   WiFiClientSecure cliente;
@@ -776,10 +783,15 @@ static bool postarLinha(const char* linha) {
   http.setTimeout(HTTP_TIMEOUT_MS);
   if (!http.begin(cliente, String(URL_RECEPTOR))) {
     Serial.println("HTTP: falha ao iniciar a requisicao");
-    return false;
+    return -3;
   }
   http.addHeader("Content-Type", "application/json");
   int codigo = http.POST((uint8_t*)linha, strlen(linha));
+  // 429 pode trazer Retry-After em segundos (data HTTP vira 0 -> backoff).
+  if (codigo == 429) {
+    String retry = http.header("Retry-After");
+    if (retry.length() > 0) g_retryAfterSeg = (uint32_t)strtoul(retry.c_str(), nullptr, 10);
+  }
   // Primeiro 2xx sem hora confiável: guarda o Date para aplicar se o NTP falhar.
   if (codigo >= 200 && codigo < 300 && !relogioValido() && g_epochHttp == 0) {
     String data = http.header("Date");
@@ -795,17 +807,65 @@ static bool postarLinha(const char* linha) {
   } else {
     Serial.printf("HTTP: falha %d\n", codigo);
   }
-  return codigo >= 200 && codigo < 300;
+  return codigo;
 }
 
-// Entrega uma linha ao transporte. Offline devolve false na hora ('o'), sem rede.
-static bool enviarRegistro(const char* linha) {
+// Entrega uma linha ao transporte. Offline devolve false na hora ('o'), sem
+// rede; "codigo" só é preenchido quando houve tentativa HTTP de fato.
+static bool enviarRegistro(const char* linha, int* codigo) {
+  *codigo = 0;
   if (g_offline) return false;
   if (g_wifi != WIFI_CONECTADO) return false;
   g_envio.tentativas++;
-  if (postarLinha(linha)) return true;
+  *codigo = postarLinha(linha);
+  if (*codigo >= 200 && *codigo < 300) return true;
   g_envio.falhas++;
   return false;
+}
+
+// Backoff exponencial das falhas transitórias: 2, 4, 8, 16, 32, 60, 60... s.
+static uint32_t backoffMs(uint32_t falhas) {
+  uint32_t ms = 2000;
+  while (falhas > 1 && ms < 60000) { ms *= 2; falhas--; }
+  return ms > 60000 ? 60000 : ms;
+}
+
+// 429 sem Retry-After: 30, 60, 120, 240, 300, 300... s.
+static uint32_t backoff429Ms(uint32_t falhas) {
+  uint32_t seg = 30;
+  while (falhas > 1 && seg < 300) { seg *= 2; falhas--; }
+  return (seg > 300 ? 300 : seg) * 1000;
+}
+
+// Classifica a falha e agenda a próxima tentativa. O cursor NÃO avança: a linha
+// segue pendente (no 429 o receptor pode ter gravado o corpo; haverá duplicata).
+static void agendarNovaTentativa(int codigo) {
+  g_falhasConsecutivas++;
+  uint32_t espera;
+
+  if (codigo == 429 && g_retryAfterSeg > 0) {
+    uint32_t seg = g_retryAfterSeg > 300 ? 300 : g_retryAfterSeg;
+    espera = seg * 1000;
+    if (espera < 5000) espera = 5000;
+    snprintf(g_ultimoErro, sizeof(g_ultimoErro), "http 429 (Retry-After)");
+  } else if (codigo == 429) {
+    espera = backoff429Ms(g_falhasConsecutivas);
+    snprintf(g_ultimoErro, sizeof(g_ultimoErro), "http 429 (limite)");
+  } else if (codigo == -2) {
+    espera = 60000;
+    snprintf(g_ultimoErro, sizeof(g_ultimoErro), "config: URL vazia");
+  } else if (codigo < 0) {
+    espera = backoffMs(g_falhasConsecutivas);
+    snprintf(g_ultimoErro, sizeof(g_ultimoErro), "rede/timeout");
+  } else {
+    espera = backoffMs(g_falhasConsecutivas);
+    snprintf(g_ultimoErro, sizeof(g_ultimoErro), "http %d", codigo);
+  }
+
+  g_proximaTentativaMs = millis() + espera;
+  Serial.printf("ENVIO: %s; falha %lu, proxima em %lu s\n",
+                g_ultimoErro, (unsigned long)g_falhasConsecutivas,
+                (unsigned long)(espera / 1000));
 }
 
 // Procura a primeira linha depois do cursor. Devolve 1 com a linha e a chave;
@@ -867,7 +927,7 @@ static void confirmarCursor(const char* bootId, uint32_t seq) {
 }
 
 // Tenta enviar o próximo pendente. Sem pendente, libera a varredura; em falha,
-// espera PAUSA_FALHA_MS (o backoff exponencial entra no INC 5).
+// aplica o backoff classificado pelo código HTTP ou pelo erro de rede.
 static void tentarEnviarPendente() {
   char linha[TAMANHO_LINHA + 16];
   char boot[9];
@@ -876,10 +936,17 @@ static void tentarEnviarPendente() {
     g_temPendente = false;
     return;
   }
-  if (!enviarRegistro(linha)) {
-    g_proximaTentativaMs = millis() + PAUSA_FALHA_MS;
+  int codigo = 0;
+  if (!enviarRegistro(linha, &codigo)) {
+    if (codigo != 0) agendarNovaTentativa(codigo);
     return;
   }
+  if (g_falhasConsecutivas > 0) {
+    Serial.printf("ENVIO: recuperado apos %lu falhas\n", (unsigned long)g_falhasConsecutivas);
+    g_falhasConsecutivas = 0;
+    g_proximaTentativaMs = 0;
+  }
+  snprintf(g_ultimoErro, sizeof(g_ultimoErro), "nenhum");
   confirmarCursor(boot, seq);
 }
 

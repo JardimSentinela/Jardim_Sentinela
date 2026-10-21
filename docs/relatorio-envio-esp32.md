@@ -292,3 +292,106 @@ para o teste de reset, usar o botão de reset dentro da sessão.
 - O tamanho líquido ficou em +157 (levemente acima do teto de ~150) porque a
   varredura, a NVS e o modo offline formam uma unidade testável; dividir
   deixaria o cursor sem uso em uma das metades.
+
+## INC 5 — Classificação da resposta e backoff
+
+### Mudanças em `esp32/src/main_alt.cpp` (+79 / −12)
+
+- `postarLinha` passou a devolver o **código HTTP** (ou negativo para falha de
+  configuração/transporte) em vez de `bool`. A linha enviada e o cursor não
+  mudam: falha sempre deixa o registro pendente.
+- `enviarRegistro` devolve o código por parâmetro; offline continua retornando
+  `false` na hora, sem sequer abrir conexão.
+- **Backoff exponencial** para falhas transitórias (timeout, rede, 5xx e demais
+  códigos): 2, 4, 8, 16, 32, 60, 60... segundos, sem jitter.
+- **429** é tratado à parte:
+  - com `Retry-After` em segundos: usa o valor (piso de 5 s, teto de 300 s);
+  - sem header (ou com data HTTP): 30, 60, 120, 240, 300, 300... segundos.
+  - O cursor **não avança**, porque o receptor pode ter gravado o corpo mesmo
+    assim (é o caso do Webhook.site). O reenvio posterior pode duplicar.
+- Sucesso zera o contador de falhas consecutivas e o `ultimoErro`; se havia
+  falhas, loga `ENVIO: recuperado apos N falhas`.
+- `'i'` ganhou `ultimoErro` (ex.: `http 429 (limite)`, `rede/timeout`,
+  `http 500`) e `proximoEnvioEm` (segundos até a próxima tentativa).
+- O teto de 60 s também vale para 4xx que não sejam 429: a linha continua na
+  cabeça da fila e é repetida. Não há descarte silencioso neste incremento.
+
+### O que não mudou
+
+Amostragem, histerese, períodos, limiares, pinos, `persistir`, compactação,
+formato do arquivo, `'d'`, `'L'`, cursor na NVS, modo offline e a branch LoRa.
+
+### Evidência
+
+Build limpo:
+
+```
+RAM:   [=         ]  14.5% (used 47596 bytes from 327680 bytes)
+Flash: [========  ]  76.2% (used 998133 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+Backoff extraído do firmware e testado no host:
+
+```
+backoff falhas=1 ->  2000 ms OK
+backoff falhas=2 ->  4000 ms OK
+backoff falhas=3 ->  8000 ms OK
+backoff falhas=4 -> 16000 ms OK
+backoff falhas=5 -> 32000 ms OK
+backoff falhas=6 -> 60000 ms OK
+backoff falhas=100 -> 60000 ms OK (sem overflow)
+429     falhas=1 ->  30000 ms OK
+429     falhas=2 ->  60000 ms OK
+429     falhas=3 -> 120000 ms OK
+429     falhas=4 -> 240000 ms OK
+429     falhas=5 -> 300000 ms OK
+429     falhas=100 -> 300000 ms OK (sem overflow)
+TODOS OS CASOS OK
+```
+
+Classificação/agendamento com as funções reais (`agendarNovaTentativa`):
+
+```
+500 1a falha -> 2 s                        espera=  2000 ms erro=http 500                 OK
+500 2a falha -> 4 s (encadeada)            espera=  4000 ms OK
+429 sem header -> 30 s                     espera= 30000 ms erro=http 429 (limite)        OK
+429 Retry-After 7 -> 7 s                   espera=  7000 ms erro=http 429 (Retry-After)   OK
+429 Retry-After 1 -> piso 5 s              espera=  5000 ms erro=http 429 (Retry-After)   OK
+429 Retry-After 999999 -> teto 300 s       espera=300000 ms erro=http 429 (Retry-After)   OK
+timeout (-1) -> 2 s                        espera=  2000 ms erro=rede/timeout             OK
+URL vazia (-2) -> 60 s                     espera= 60000 ms erro=config: URL vazia        OK
+400 -> backoff 2 s                         espera=  2000 ms erro=http 400                 OK
+503 -> 2 s                                 espera=  2000 ms erro=http 503                 OK
+TODOS OS CASOS OK
+```
+
+### Como testar no Wokwi
+
+1. Com o token do Webhook.site esgotado (429): no primeiro envio aparece
+   `HTTP: codigo 429` e `ENVIO: http 429 (limite); falha 1, proxima em 30 s`.
+   As tentativas seguintes espaçam 60, 120, 240 e 300 s; o `'i'` mostra
+   `ultimoErro: http 429 (limite)` e `proximoEnvioEm: N s`.
+   O importante é que o firmware **para de martelar** o receptor.
+2. Trocar `URL_RECEPTOR` em `secrets.h` por um endpoint saudável (ou esperar a
+   cota): o próximo 2xx loga `ENVIO: recuperado apos N falhas`, o cursor avança
+   e `'i'` volta a `ultimoErro: nenhum`.
+3. Para ver o backoff 2/4/8 sem esperar a cota: apontar temporariamente para
+   `https://httpbin.org/status/500` e observar os intervalos; depois restaurar.
+4. Para 429 com `Retry-After`, um endpoint que devolva o header (ex.:
+   `httpbin` não fornece) — o caso sem header já cobre o caminho padrão.
+
+### Riscos
+
+- O `Retry-After` em formato de data HTTP é ignorado (vira 0) e cai no backoff;
+  apenas o formato em segundos é interpretado.
+- O teto de 300 s vale tanto para `Retry-After` quanto para o 429 sem header;
+  se o receptor pedir mais, o dispositivo tenta antes do pedido.
+- 4xx permanente (400/401/403) mantém a fila parada naquela linha, com
+  tentativas a cada 60 s. É conservador (não perde), mas não drena o restante;
+  se o contrato do receptor definir descarte, isso entra em incremento próprio.
+- Sem jitter: vários dispositivos com a mesma falha tendem a sincronizar as
+  tentativas. Com um jardim isso não é problema; jitter pode ser adicionado
+  depois sem mudar a interface.
+- `falhasConsecutivas` não zera quando o Wi-Fi cai; ao reconectar, o backoff
+  continua de onde parou (no máximo 60 s).
