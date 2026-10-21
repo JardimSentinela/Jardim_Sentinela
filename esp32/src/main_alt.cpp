@@ -56,7 +56,7 @@ constexpr uint32_t PERIODO_SNAPSHOT_MS = 60000;
 static const char* ARQ_FILA = "/fila.ndjson";
 static const char* ARQ_TMP  = "/fila.tmp";   // arquivo temporário da compactação
 
-// Buffer da linha JSON: a linha mais longa é a de boot (~230 bytes).
+// Buffer da linha JSON: a linha mais longa é a de boot (~236 bytes com origem).
 constexpr size_t   TAMANHO_LINHA         = 320;
 
 // ===== NOMES DOS CAMPOS JSON ================================================
@@ -74,12 +74,20 @@ static const char* CAMPO_DELTA_T_MS       = "deltaTMs";
 static const char* CAMPO_HORA_SINC        = "horaSincronizada";
 static const char* CAMPO_LAT              = "lat";
 static const char* CAMPO_LON              = "lon";
+static const char* CAMPO_ORIGEM           = "origem";
 
 // Valores textuais dos campos.
 static const char* TIPO_EVENTO            = "evento";    // mudança de patamar
 static const char* TIPO_SNAPSHOT          = "snapshot";  // heartbeat periódico
 static const char* TIPO_BOOT              = "boot";      // primeira linha do boot
 static const char* ID_SENSOR_JARDIM       = "jardim";    // snapshot/boot = unidade inteira
+
+// Origem do dado: na simulação não há rádio; no piloto (ramo LoRa) é "campo".
+#ifdef SIMULATION
+static const char* TEXTO_ORIGEM           = "simulacao";
+#else
+static const char* TEXTO_ORIGEM           = "campo";
+#endif
 
 // ===== RELÓGIO ===============================================================
 // Epoch a partir do qual o relógio é considerado sincronizado (NTP ligado).
@@ -104,6 +112,15 @@ struct Evento {
 
 QueueHandle_t filaEventos;
 std::atomic<uint32_t> descartados{0};
+
+// Contadores do envio (comando 'i'). "pendentes" é derivado do arquivo; os
+// demais só passam a ser incrementados quando o transporte real existir (INC 2).
+struct ContadoresEnvio {
+  uint32_t tentativas;
+  uint32_t confirmados;
+  uint32_t falhas;
+};
+static ContadoresEnvio g_envio = {0, 0, 0};
 
 // Contador de registros deste boot (atribuído só pela tarefa de amostragem,
 // que é a única que cria registros).
@@ -207,7 +224,9 @@ static void montarLinha(const Evento& e, const char* ts, const char* idSensor,
     snprintf(parte, sizeof(parte), ",\"%s\":%.6f,\"%s\":%.6f", CAMPO_LAT, LATITUDE, CAMPO_LON, LONGITUDE);
     anexar(buffer, tamanho, usado, parte);
   }
-  snprintf(parte, sizeof(parte), ",\"%s\":%s}", CAMPO_HORA_SINC, e.relogioValido ? "true" : "false");
+  snprintf(parte, sizeof(parte), ",\"%s\":%s", CAMPO_HORA_SINC, e.relogioValido ? "true" : "false");
+  anexar(buffer, tamanho, usado, parte);
+  snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"}", CAMPO_ORIGEM, TEXTO_ORIGEM);
   anexar(buffer, tamanho, usado, parte);
 }
 
@@ -497,6 +516,56 @@ void limparFila() {
   Serial.println("Arquivo apagado.");
 }
 
+// Comando 'i': estado do arquivo e contadores do envio. "pendentes" é o que
+// ainda não foi confirmado; sem cursor (INC 4) nada está confirmado ainda.
+void imprimirDiagnostico() {
+  File f = LittleFS.open(ARQ_FILA, "r");
+  size_t bytes = 0;
+  uint32_t linhas = 0;
+  bool existe = (bool)f;
+  if (f) {
+    bytes = f.size();
+    linhas = contarLinhasNoPrefixo(f, bytes);
+    f.close();
+  }
+  uint32_t pendentes = (linhas > g_envio.confirmados) ? (linhas - g_envio.confirmados) : 0;
+  Serial.println("--- DIAGNOSTICO ---");
+  Serial.printf("arquivo: %s\n", existe ? "existe" : "inexistente");
+  Serial.printf("bytes: %u\n", (unsigned)bytes);
+  Serial.printf("linhas: %lu\n", (unsigned long)linhas);
+  Serial.printf("pendentes: %lu\n", (unsigned long)pendentes);
+  Serial.printf("tentativas: %lu\n", (unsigned long)g_envio.tentativas);
+  Serial.printf("confirmados: %lu\n", (unsigned long)g_envio.confirmados);
+  Serial.printf("falhas: %lu\n", (unsigned long)g_envio.falhas);
+  Serial.printf("descartados: %lu\n", (unsigned long)descartados.load());
+  Serial.printf("bootId: %s\n", g_bootId);
+  Serial.printf("relogio: %s\n", relogioValido() ? "valido" : "invalido");
+}
+
+// Costura do envio (INC 1): ainda não há transporte, então o registro é
+// recusado e permanece no arquivo. O INC 2 liga o POST HTTPS aqui.
+static bool enviarRegistro(const Evento& e) {
+  (void)e;
+  static bool avisou = false;
+  if (!avisou) {
+    Serial.println("ENVIO: sem transporte (INC 1); registros ficam no arquivo");
+    avisou = true;
+  }
+  return false;
+}
+
+// Loga no boot se a fila antiga existe, quantos bytes tem e se o relógio é
+// confiável; é o diagnóstico mínimo para interpretar os registros seguintes.
+static void logarEstadoBoot() {
+  File f = LittleFS.open(ARQ_FILA, "r");
+  bool existe = (bool)f;
+  size_t bytes = 0;
+  if (f) { bytes = f.size(); f.close(); }
+  Serial.printf("BOOT: filaExiste=%s bytes=%u bootId=%s relogio=%s\n",
+                existe ? "sim" : "nao", (unsigned)bytes, g_bootId,
+                relogioValido() ? "valido" : "invalido");
+}
+
 // ===== INICIALIZAÇÃO E LOOP PRINCIPAL ========================================
 
 void setup() {
@@ -520,22 +589,34 @@ void setup() {
   // Relógio: hoje não há NTP, então as linhas saem com horaSincronizada:false.
   iniciarSincronizacaoNtp();
 
+  // Diagnóstico do boot, agora que o bootId já existe e o relógio foi tentado.
+  logarEstadoBoot();
+
   filaEventos = xQueueCreate(32, sizeof(Evento));
   xTaskCreatePinnedToCore(tarefaAmostragem, "amostra", 4096, nullptr, 3, nullptr, 1);
 }
 
 void loop() {
   Evento e;
-  while (xQueueReceive(filaEventos, &e, 0) == pdTRUE) persistir(e);
+  bool temParaEnviar = false;
+  Evento ultimoGravado;
+  while (xQueueReceive(filaEventos, &e, 0) == pdTRUE) {
+    persistir(e);
+    ultimoGravado = e;
+    temParaEnviar = true;
+  }
 
   while (Serial.available()) {
     char c = Serial.read();
     if (c == 'd') despejarFila();
     else if (c == 'L') limparFila();
+    else if (c == 'i') imprimirDiagnostico();
   }
 
-  // PONTO DE EXTENSÃO (envio): transmitir aqui o arquivo, só apagando o que o
-  // receptor confirmar (ACK). Responsabilidade da Pessoa 3.
+  // PONTO DE EXTENSÃO (envio): entrega ao transporte o último registro gravado.
+  // O INC 2 troca o stub por HTTPS; a varredura por cursor entra no INC 4.
+  if (temParaEnviar) enviarRegistro(ultimoGravado);
 
-  delay(20);
+  // Sem delay(): o loop não bloqueia (critério 12). A amostragem tem
+  // prioridade maior (3) e mantém seu período de 100 ms.
 }
