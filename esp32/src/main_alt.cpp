@@ -107,6 +107,8 @@ static const char* TIPO_BOOT              = "boot";      // primeira linha do bo
 static const char* ID_SENSOR_JARDIM       = "jardim";    // snapshot/boot = unidade inteira
 
 // Origem do dado: na simulação não há rádio; no piloto (ramo LoRa) é "campo".
+static const char* TEXTO_SIMULACAO        = "simulacao";
+static const char* TEXTO_CAMPO            = "campo";
 #ifdef SIMULATION
 static const char* TEXTO_ORIGEM           = "simulacao";
 #else
@@ -157,6 +159,10 @@ static uint32_t g_proximaTentativaMs = 0;      // pausa após falha de envio
 static uint32_t g_falhasConsecutivas = 0;      // alimenta o backoff exponencial
 static uint32_t g_retryAfterSeg = 0;           // header Retry-After do último 429
 static char     g_ultimoErro[40] = "nenhum";   // aparece no comando 'i'
+
+// Comando 'e' (INC 5/6B): força a resposta do gateway local, sem rede.
+enum RespostaForcada : uint8_t { RESP_OK, RESP_500, RESP_400, RESP_TIMEOUT };
+static RespostaForcada g_resposta = RESP_OK;
 static char     g_ackBootId[9] = {0};          // cursor: último 2xx confirmado
 static uint32_t g_ackSeq = 0;
 static bool     g_ackValido = false;
@@ -269,6 +275,36 @@ static void formatarTimestamp(uint32_t ms, bool sincronizado, char* buffer, size
   }
   struct tm tmInfo;
   gmtime_r(&instante, &tmInfo);
+  strftime(buffer, tamanho, "%Y-%m-%dT%H:%M:%SZ", &tmInfo);
+}
+
+// Converte "YYYY-MM-DDTHH:MM:SSZ" em epoch UTC. Implementado sem timegm, que
+// nao existe em todo core; usado pelo codec e pelo teste 't'.
+static bool parsearIso(const char* texto, uint32_t* epoch) {
+  int ano, mes, dia, hora, min, seg;
+  if (!texto || strlen(texto) < 20 || texto[19] != 'Z') return false;
+  if (sscanf(texto, "%4d-%2d-%2dT%2d:%2d:%2d", &ano, &mes, &dia, &hora, &min, &seg) != 6) return false;
+  if (ano < 1970 || mes < 1 || mes > 12 || dia < 1 || dia > 31) return false;
+  if (hora > 23 || min > 59 || seg > 60) return false;
+
+  // Dias desde 1970-01-01 (algoritmo days_from_civil).
+  int yy = ano - (mes <= 2 ? 1 : 0);
+  int era = (yy >= 0 ? yy : yy - 399) / 400;
+  unsigned yoe = (unsigned)(yy - era * 400);
+  unsigned doy = (153u * (unsigned)(mes + (mes > 2 ? -3 : 9)) + 2u) / 5u + (unsigned)dia - 1u;
+  unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+  int32_t dias = era * 146097 + (int32_t)doe - 719468;
+  int64_t t = (int64_t)dias * 86400 + hora * 3600 + min * 60 + seg;
+  if (t < 0 || t > 0xFFFFFFFFLL) return false;
+  *epoch = (uint32_t)t;
+  return true;
+}
+
+// Formata um epoch UTC no mesmo padrao gravado no arquivo.
+static void formatarIso(uint32_t epoch, char* buffer, size_t tamanho) {
+  time_t t = (time_t)epoch;
+  struct tm tmInfo;
+  gmtime_r(&t, &tmInfo);
   strftime(buffer, tamanho, "%Y-%m-%dT%H:%M:%SZ", &tmInfo);
 }
 
@@ -763,11 +799,283 @@ static void atualizarWifi() {
   }
 }
 
+// ===== GATEWAY LOCAL (INC 6B) ===============================================
+// No Wokwi nao ha radio: o firmware monta o quadro, o "gateway" local decodifica
+// e o JSON resultante e o que vai no POST. Fora do SIMULATION quem decodifica e
+// o gateway remoto (ramo LoRa, nao compilado aqui).
+
+// Aponta para o valor bruto de "chave":... (sem as aspas); nullptr se ausente.
+static const char* valorCampo(const char* linha, const char* chave) {
+  char padrao[24];
+  snprintf(padrao, sizeof(padrao), "\"%s\":", chave);
+  const char* p = strstr(linha, padrao);
+  return p ? p + strlen(padrao) : nullptr;
+}
+
+// Copia o texto de um campo string (com aspas) para o buffer.
+static bool campoTxt(const char* linha, const char* chave, char* out, size_t tam) {
+  const char* p = valorCampo(linha, chave);
+  if (!p || *p != '"') return false;
+  p++;
+  const char* fim = strchr(p, '"');
+  if (!fim || (size_t)(fim - p) >= tam) return false;
+  memcpy(out, p, (size_t)(fim - p));
+  out[fim - p] = '\0';
+  return true;
+}
+
+// Le um campo inteiro nao negativo (strtoul); false se ausente/invalido.
+static bool campoU32(const char* linha, const char* chave, uint32_t* valor) {
+  const char* p = valorCampo(linha, chave);
+  if (!p) return false;
+  char* fim = nullptr;
+  unsigned long v = strtoul(p, &fim, 10);
+  if (fim == p) return false;
+  *valor = (uint32_t)v;
+  return true;
+}
+
+// Le um campo decimal (strtod); false se ausente/invalido.
+static bool campoDouble(const char* linha, const char* chave, double* valor) {
+  const char* p = valorCampo(linha, chave);
+  if (!p) return false;
+  char* fim = nullptr;
+  double v = strtod(p, &fim);
+  if (fim == p) return false;
+  *valor = v;
+  return true;
+}
+
+// Converte uma linha NDJSON do arquivo no quadro v1 (n=1 por enquanto; o lote
+// de ate 6 entra no INC 7). "horaSinc" e metadado fora da banda do quadro v1.
+static bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaSinc) {
+  char tipo[12], idSensor[16], bootTexto[9], tsTexto[25], origem[12];
+  uint32_t seq = 0, bateria = 0, bootId = 0, ts = 0, deltaMs = 0;
+  double nivel = 0.0, lat = 0.0, lon = 0.0;
+
+  if (!campoTxt(linha, CAMPO_TIPO, tipo, sizeof(tipo))) return false;
+  uint8_t t;
+  if (strcmp(tipo, TIPO_EVENTO) == 0) t = codec::EVENTO;
+  else if (strcmp(tipo, TIPO_SNAPSHOT) == 0) t = codec::SNAPSHOT;
+  else if (strcmp(tipo, TIPO_BOOT) == 0) t = codec::BOOT;
+  else return false;
+
+  uint8_t sensor = codec::SENSOR_JARDIM;
+  if (t == codec::EVENTO) {
+    unsigned nSensor = 0;
+    if (!campoTxt(linha, CAMPO_ID_SENSOR, idSensor, sizeof(idSensor))) return false;
+    if (sscanf(idSensor, "sensor-%u", &nSensor) != 1 || nSensor < 1 || nSensor > 31) return false;
+    sensor = (uint8_t)(nSensor - 1);
+  }
+
+  if (!campoU32(linha, CAMPO_SEQ, &seq)) return false;
+  if (!campoTxt(linha, CAMPO_BOOT_ID, bootTexto, sizeof(bootTexto))) return false;
+  bootId = (uint32_t)strtoul(bootTexto, nullptr, 16);
+  if (!campoTxt(linha, CAMPO_TIMESTAMP, tsTexto, sizeof(tsTexto))) return false;
+  if (!parsearIso(tsTexto, &ts)) return false;
+  if (!campoDouble(linha, CAMPO_NIVEL_AGUA, &nivel) || nivel < 0.0 || nivel > 255.0) return false;
+  if (!campoU32(linha, CAMPO_BATERIA, &bateria) || bateria > 100) return false;
+  campoU32(linha, CAMPO_DELTA_T_MS, &deltaMs);  // opcional
+
+  const char* pSinc = valorCampo(linha, CAMPO_HORA_SINC);
+  *horaSinc = pSinc && strncmp(pSinc, "true", 4) == 0;
+  if (!campoTxt(linha, CAMPO_ORIGEM, origem, sizeof(origem))) origem[0] = '\0';
+
+  if (t == codec::BOOT) {
+    campoDouble(linha, CAMPO_LAT, &lat);
+    campoDouble(linha, CAMPO_LON, &lon);
+  }
+
+  q->flags = (uint8_t)((strcmp(origem, TEXTO_SIMULACAO) == 0 ? codec::FLAG_SIMULACAO : 0) |
+                       (t == codec::BOOT ? codec::FLAG_COORDENADAS : 0));
+  q->jardimIdx = 0;                    // config do gateway: 0 -> JARDIM_ID
+  q->seqBase = (uint16_t)seq;          // v1 usa u16; o cursor guarda o seq original
+  q->bootId = bootId;
+  q->baseTs = ts;
+  q->n = 1;
+
+  codec::Registro& r = q->regs[0];
+  r.tipo = t;
+  r.sensor = sensor;
+  r.seq = q->seqBase;
+  r.ts = ts;
+  r.nivelCm = (uint8_t)(nivel + 0.5);
+  r.bateria = (uint8_t)bateria;
+  r.deltaT = (uint16_t)(deltaMs / 100 > 65535 ? 65535 : deltaMs / 100);
+  r.lat = (int32_t)(lat * 10000000.0 + (lat >= 0 ? 0.5 : -0.5));
+  r.lon = (int32_t)(lon * 10000000.0 + (lon >= 0 ? 0.5 : -0.5));
+  r.coords = (t == codec::BOOT);
+  return true;
+}
+
+// Reconstroi o JSON a partir do quadro decodificado, na MESMA ordem de campos
+// do arquivo. "horaSinc" vem da linha original (o quadro v1 nao o carrega).
+static bool montarJsonGateway(const codec::Quadro& q, bool horaSinc, char* out, size_t tam) {
+  if (q.n != 1 || q.jardimIdx != 0) return false;
+  const codec::Registro& r = q.regs[0];
+  const char* tipo = (r.tipo == codec::EVENTO) ? TIPO_EVENTO
+                   : (r.tipo == codec::SNAPSHOT) ? TIPO_SNAPSHOT : TIPO_BOOT;
+  char idSensor[16];
+  if (r.tipo == codec::EVENTO) snprintf(idSensor, sizeof(idSensor), "sensor-%02u", r.sensor + 1);
+  else snprintf(idSensor, sizeof(idSensor), "%s", ID_SENSOR_JARDIM);
+  char ts[25];
+  formatarIso(r.ts, ts, sizeof(ts));
+  const char* origem = (q.flags & codec::FLAG_SIMULACAO) ? TEXTO_SIMULACAO : TEXTO_CAMPO;
+
+  char parte[160];
+  size_t usado = 0;
+  out[0] = '\0';
+  anexar(out, tam, usado, "{");
+  snprintf(parte, sizeof(parte), "\"%s\":\"%s\",", CAMPO_TIPO, tipo);
+  anexar(out, tam, usado, parte);
+  snprintf(parte, sizeof(parte), "\"%s\":\"%s\",", CAMPO_ID_JARDIM, JARDIM_ID);
+  anexar(out, tam, usado, parte);
+  snprintf(parte, sizeof(parte), "\"%s\":\"%s\",", CAMPO_ID_SENSOR, idSensor);
+  anexar(out, tam, usado, parte);
+  snprintf(parte, sizeof(parte), "\"%s\":%.1f,", CAMPO_NIVEL_AGUA, (double)r.nivelCm);
+  anexar(out, tam, usado, parte);
+  snprintf(parte, sizeof(parte), "\"%s\":%u,", CAMPO_BATERIA, (unsigned)r.bateria);
+  anexar(out, tam, usado, parte);
+  snprintf(parte, sizeof(parte), "\"%s\":\"%s\",", CAMPO_TIMESTAMP, ts);
+  anexar(out, tam, usado, parte);
+  snprintf(parte, sizeof(parte), "\"%s\":%u,", CAMPO_SEQ, (unsigned)r.seq);
+  anexar(out, tam, usado, parte);
+  snprintf(parte, sizeof(parte), "\"%s\":\"%08X\"", CAMPO_BOOT_ID, q.bootId);
+  anexar(out, tam, usado, parte);
+  if (r.tipo == codec::EVENTO && r.deltaT > 0) {
+    snprintf(parte, sizeof(parte), ",\"%s\":%u", CAMPO_DELTA_T_MS, (unsigned)r.deltaT * 100);
+    anexar(out, tam, usado, parte);
+  }
+  if (r.tipo == codec::BOOT) {
+    snprintf(parte, sizeof(parte), ",\"%s\":%.6f,\"%s\":%.6f",
+             CAMPO_LAT, r.lat / 10000000.0, CAMPO_LON, r.lon / 10000000.0);
+    anexar(out, tam, usado, parte);
+  }
+  snprintf(parte, sizeof(parte), ",\"%s\":%s,\"%s\":\"%s\"}",
+           CAMPO_HORA_SINC, horaSinc ? "true" : "false", CAMPO_ORIGEM, origem);
+  anexar(out, tam, usado, parte);
+  return usado > 0 && usado < tam - 1;
+}
+
+// Caminho da simulacao: monta o quadro, decodifica e devolve o JSON do POST.
+static bool gatewaySimulado(const char* linha, char* json, size_t tam) {
+  codec::Quadro q;
+  bool horaSinc = false;
+  if (!montarQuadroDaLinha(linha, &q, &horaSinc)) {
+    Serial.println("CODEC: linha invalida");
+    return false;
+  }
+  uint8_t quadro[codec::MAX_COM_EXTRAS];
+  size_t n = codec::codificar(q, quadro, sizeof(quadro));
+  if (n == 0) { Serial.println("CODEC: falha ao codificar"); return false; }
+  codec::Quadro d;
+  if (!codec::decodificar(quadro, n, &d)) {
+    Serial.println("CODEC: falha ao decodificar");
+    return false;
+  }
+  if (!montarJsonGateway(d, horaSinc, json, tam)) {
+    Serial.println("CODEC: falha ao montar JSON");
+    return false;
+  }
+  return true;
+}
+
+// Hexdump compacto do teste 't' (16 bytes por linha).
+static void imprimirHex(const uint8_t* b, size_t n) {
+  Serial.printf("  hex (%u bytes):", (unsigned)n);
+  for (size_t i = 0; i < n; i++) {
+    if (i % 16 == 0) Serial.print("\n   ");
+    Serial.printf(" %02X", b[i]);
+  }
+  Serial.println();
+}
+
+// Testa um tipo: codifica, decodifica, compara campo a campo e confronta o JSON
+// reconstruido com o JSON do arquivo.
+static bool testarCodec(const char* nome, const Evento& e, const char* tsTexto) {
+  char idSensor[16];
+  formatarIdSensor(e, idSensor, sizeof(idSensor));
+  char original[TAMANHO_LINHA];
+  montarLinha(e, tsTexto, idSensor, original, sizeof(original));
+
+  uint32_t ts = 0;
+  if (!parsearIso(tsTexto, &ts)) {
+    Serial.printf("CODEC %s: timestamp invalido\n", nome);
+    return false;
+  }
+
+  codec::Quadro q{};
+  q.flags = (uint8_t)((strcmp(TEXTO_ORIGEM, TEXTO_SIMULACAO) == 0 ? codec::FLAG_SIMULACAO : 0) |
+                      (e.tipo == REG_BOOT ? codec::FLAG_COORDENADAS : 0));
+  q.jardimIdx = 0;
+  q.seqBase = (uint16_t)e.seq;
+  q.bootId = (uint32_t)strtoul(g_bootId, nullptr, 16);
+  q.baseTs = ts;
+  q.n = 1;
+
+  codec::Registro& r = q.regs[0];
+  r.tipo = (uint8_t)e.tipo;   // REG_EVENTO/SNAPSHOT/BOOT = 0/1/2 no codec
+  r.sensor = (e.tipo == REG_EVENTO) ? e.sensor : codec::SENSOR_JARDIM;
+  r.seq = e.seq;
+  r.ts = ts;
+  r.nivelCm = (uint8_t)(e.nivelAgua + 0.5f);
+  r.bateria = BATERIA_PADRAO;
+  r.deltaT = (uint16_t)(e.deltaTMs / 100);
+  r.lat = 0;
+  r.lon = 0;
+  r.coords = (e.tipo == REG_BOOT);
+
+  uint8_t quadro[codec::MAX_COM_EXTRAS];
+  size_t n = codec::codificar(q, quadro, sizeof(quadro));
+  codec::Quadro d{};
+  bool ok = n > 0 && codec::decodificar(quadro, n, &d) && d.n == 1 &&
+            d.flags == q.flags && d.seqBase == q.seqBase && d.bootId == q.bootId &&
+            d.baseTs == q.baseTs &&
+            d.regs[0].tipo == r.tipo && d.regs[0].sensor == r.sensor &&
+            d.regs[0].seq == r.seq && d.regs[0].ts == r.ts &&
+            d.regs[0].nivelCm == r.nivelCm && d.regs[0].bateria == r.bateria &&
+            d.regs[0].deltaT == r.deltaT && d.regs[0].lat == r.lat &&
+            d.regs[0].lon == r.lon && d.regs[0].coords == r.coords;
+
+  char gateway[TAMANHO_LINHA];
+  bool jsonOk = ok && montarJsonGateway(d, e.relogioValido, gateway, sizeof(gateway)) &&
+                strcmp(original, gateway) == 0;
+  Serial.printf("CODEC %-8s: %s (%u bytes) JSON %s\n",
+                nome, ok ? "OK" : "FALHOU", (unsigned)n, jsonOk ? "OK" : "FALHOU");
+  if (!jsonOk) {
+    Serial.printf("  arquivo: %s\n", original);
+    Serial.printf("  gateway: %s\n", gateway);
+  }
+  if (ok) imprimirHex(quadro, n);
+  return ok && jsonOk;
+}
+
+// Comando 't': round-trip dos tres tipos, incluindo o JSON do gateway.
+static void rodarTesteCodec() {
+  Serial.println("--- TESTE CODEC ---");
+  Evento ev{REG_EVENTO, 0, 5.0f, 3200, 0, 7, true};
+  Evento sn{REG_SNAPSHOT, 0, 10.0f, 0, 0, 8, true};
+  Evento bt{REG_BOOT, 0, 0.0f, 0, 0, 0, false};
+  bool ok = testarCodec("evento", ev, "2026-10-21T20:40:35Z");
+  ok = testarCodec("snapshot", sn, "2026-10-21T20:40:40Z") && ok;
+  ok = testarCodec("boot", bt, "2026-10-21T20:40:00Z") && ok;
+  Serial.printf("CODEC: %s\n", ok ? "TODOS OK" : "FALHOU");
+}
+
 // Posta UMA linha já gravada no receptor, sem remontar o JSON (timestamp e
 // campos ficam idênticos ao arquivo). Devolve o código HTTP, ou negativo em
 // falha de configuração/transporte. Bloqueia no máximo HTTP_TIMEOUT_MS.
 static int postarLinha(const char* linha) {
   g_retryAfterSeg = 0;
+
+  // Comando 'e': força a resposta do gateway local, sem tocar na rede.
+  if (g_resposta != RESP_OK) {
+    if (g_resposta == RESP_TIMEOUT) { Serial.println("HTTP: forcado timeout"); return -1; }
+    int forcado = (g_resposta == RESP_500) ? 500 : 400;
+    Serial.printf("HTTP: forcado %d\n", forcado);
+    return forcado;
+  }
+
   if (strlen(URL_RECEPTOR) == 0) {
     static bool avisouUrl = false;
     if (!avisouUrl) { Serial.println("HTTP: URL_RECEPTOR vazia (preencha secrets.h)"); avisouUrl = true; }
@@ -818,7 +1126,23 @@ static bool enviarRegistro(const char* linha, int* codigo) {
   if (g_offline) return false;
   if (g_wifi != WIFI_CONECTADO) return false;
   g_envio.tentativas++;
-  *codigo = postarLinha(linha);
+
+#ifdef SIMULATION
+  // Gateway local: decodifica o quadro e posta o JSON (sem rádio no Wokwi).
+  char json[TAMANHO_LINHA];
+  if (!gatewaySimulado(linha, json, sizeof(json))) {
+    *codigo = -4;
+    g_envio.falhas++;
+    return false;
+  }
+  *codigo = postarLinha(json);
+#else
+  // NÃO COMPILADO NO WOKWI — validar no hardware: o quadro segue pelo rádio e
+  // o gateway remoto decodifica e posta. Sem rádio aqui, não há envio.
+  (void)linha;
+  *codigo = -4;
+#endif
+
   if (*codigo >= 200 && *codigo < 300) return true;
   g_envio.falhas++;
   return false;
@@ -855,6 +1179,13 @@ static void agendarNovaTentativa(int codigo) {
   } else if (codigo == -2) {
     espera = 60000;
     snprintf(g_ultimoErro, sizeof(g_ultimoErro), "config: URL vazia");
+  } else if (codigo == -4) {
+    espera = 60000;
+    snprintf(g_ultimoErro, sizeof(g_ultimoErro), "codec: linha invalida");
+  } else if (codigo >= 400 && codigo < 500) {
+    // Erro de contrato é sistêmico: para a fila e retenta em 5 min (INC 5).
+    espera = 300000;
+    snprintf(g_ultimoErro, sizeof(g_ultimoErro), "http %d (contrato)", codigo);
   } else if (codigo < 0) {
     espera = backoffMs(g_falhasConsecutivas);
     snprintf(g_ultimoErro, sizeof(g_ultimoErro), "rede/timeout");
@@ -957,6 +1288,22 @@ static void alternarOffline() {
   Serial.printf("ENVIO: modo %s\n", g_offline ? "offline (nao envia)" : "online");
 }
 
+// Comando 'e': cicla ok -> 500 -> 400 -> timeout, para exercitar o backoff.
+static void alternarRespostaForcada() {
+  switch (g_resposta) {
+    case RESP_OK:      g_resposta = RESP_500; break;
+    case RESP_500:     g_resposta = RESP_400; break;
+    case RESP_400:     g_resposta = RESP_TIMEOUT; break;
+    default:           g_resposta = RESP_OK; break;
+  }
+  const char* nomes[] = {"ok", "500", "400", "timeout"};
+  // Trocar de modo tambem zera a espera/backoff, para o teste nao ficar
+  // preso nos 5 min de um 400 anterior.
+  g_proximaTentativaMs = 0;
+  g_falhasConsecutivas = 0;
+  Serial.printf("ENVIO: resposta forcada = %s\n", nomes[g_resposta]);
+}
+
 // Loga no boot se a fila antiga existe, quantos bytes tem e se o relógio é
 // confiável; é o diagnóstico mínimo para interpretar os registros seguintes.
 static void logarEstadoBoot() {
@@ -1028,6 +1375,8 @@ void loop() {
     else if (c == 'L') limparFila();
     else if (c == 'i') imprimirDiagnostico();
     else if (c == 'o') alternarOffline();
+    else if (c == 'e') alternarRespostaForcada();
+    else if (c == 't') rodarTesteCodec();
   }
 
   // ENVIO (INC 4): varre o arquivo e manda o próximo não confirmado. Offline

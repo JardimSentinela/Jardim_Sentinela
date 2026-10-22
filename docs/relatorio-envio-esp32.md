@@ -313,8 +313,9 @@ para o teste de reset, usar o botão de reset dentro da sessão.
   falhas, loga `ENVIO: recuperado apos N falhas`.
 - `'i'` ganhou `ultimoErro` (ex.: `http 429 (limite)`, `rede/timeout`,
   `http 500`) e `proximoEnvioEm` (segundos até a próxima tentativa).
-- O teto de 60 s também vale para 4xx que não sejam 429: a linha continua na
-  cabeça da fila e é repetida. Não há descarte silencioso neste incremento.
+- 4xx que não seja 429 **para** a fila naquela linha: o cursor não avança e a
+  nova tentativa fica para 5 min depois (ajustado no INC 6B para cumprir o
+  INC 5). Não há descarte silencioso.
 
 ### O que não mudou
 
@@ -388,8 +389,9 @@ TODOS OS CASOS OK
 - O teto de 300 s vale tanto para `Retry-After` quanto para o 429 sem header;
   se o receptor pedir mais, o dispositivo tenta antes do pedido.
 - 4xx permanente (400/401/403) mantém a fila parada naquela linha, com
-  tentativas a cada 60 s. É conservador (não perde), mas não drena o restante;
-  se o contrato do receptor definir descarte, isso entra em incremento próprio.
+  tentativas a cada 5 min (o `'e'` do INC 6B permite exercitar isso). É
+  conservador (não perde), mas não drena o restante; se o contrato do receptor
+  definir descarte, isso entra em incremento próprio.
 - Sem jitter: vários dispositivos com a mesma falha tendem a sincronizar as
   tentativas. Com um jardim isso não é problema; jitter pode ser adicionado
   depois sem mudar a interface.
@@ -488,3 +490,126 @@ limite de 6 registros (56 B) e rejeição de quadros inválidos: **passou**.
   separar em quadros.
 - O decoder exige que o buffer termine exatamente no último registro; é
   intencional para pegar erro de tamanho, mas rejeita padding futuro.
+
+### 6B — Gateway local, `'t'` e `'e'`
+
+### Mudanças em `esp32/src/main_alt.cpp` (+350 / −1)
+
+- `parsearIso` / `formatarIso`: conversão entre `YYYY-MM-DDTHH:MM:SSZ` e epoch
+  UTC, sem depender de `timegm`.
+- `valorCampo` / `campoTxt` / `campoU32` / `campoDouble`: leitura mínima dos
+  campos da linha NDJSON (sem biblioteca JSON).
+- `montarQuadroDaLinha`: linha do arquivo → `codec::Quadro` com `n=1`
+  (`idSensor`, `nivelAgua`, `bateria`, `seq`, `bootId`, `timestamp`,
+  `deltaTMs`, `horaSincronizada`, `origem`, `lat/lon`).
+- `montarJsonGateway`: quadro decodificado → JSON na **mesma ordem de campos**
+  do arquivo. `horaSincronizada` vem da linha original (metadado fora da banda,
+  porque o quadro v1 não o carrega).
+- `gatewaySimulado`: monta o quadro, codifica, **decodifica** e devolve o JSON.
+  No ramo `SIMULATION`, `enviarRegistro` posta esse JSON; o ramo `#else` ficou
+  com o comentário “NÃO COMPILADO NO WOKWI — validar no hardware”.
+- Comando **`'t'`**: round-trip de evento/snapshot/boot, comparação campo a
+  campo, comparação do JSON do gateway com o do arquivo e hexdump com tamanho.
+- Comando **`'e'`**: cicla `ok → 500 → 400 → timeout`. A resposta forçada é
+  devolvida por `postarLinha` sem tocar na rede; trocar de modo zera a espera e
+  o contador de falhas para o teste não ficar preso.
+- **4xx (não 429) agora retenta em 5 min** (era 60 s): fecha a exigência do
+  INC 5 de “parar, preservar e registrar `ultimoErro`”.
+- `-4` (linha que o codec não conseguiu interpretar) entra no backoff como
+  `codec: linha invalida`, com 60 s.
+
+### O que NÃO mudou
+
+Amostragem, histerese, períodos, limiares, pinos, persistência, compactação,
+formato do arquivo, cursor, offline, 429/Retry-After, `'d'`, `'L'`, `'i'`,
+`'o'` e a branch LoRa.
+
+### Evidência
+
+Build:
+
+```
+RAM:   [=         ]  14.5% (used 47596 bytes from 327680 bytes)
+Flash: [========  ]  76.6% (used 1003469 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+Teste de host com as funções **reais extraídas do firmware** (`montarLinha`,
+`montarQuadroDaLinha`, `montarJsonGateway`, `testarCodec`):
+
+```
+CODEC evento  : OK (21 bytes) JSON OK
+  hex (21 bytes):
+    01 01 00 01 07 00 46 E6 8D 6F 43 23 D9 6A 00 00
+    00 05 64 20 00
+CODEC snapshot: OK (21 bytes) JSON OK
+CODEC boot    : OK (29 bytes) JSON OK
+linha real -> gateway              OK
+linha truncada rejeitada           OK
+TODOS OS CASOS OK
+```
+
+O caso “linha real” pega a linha completa do arquivo (evento com `deltaTMs` e
+`origem`), converte para quadro, decodifica e compara o JSON resultante com a
+linha original usando `strcmp`: idêntico.
+
+Backoff após o ajuste do 4xx:
+
+```
+400 (contrato) -> 5 min                    300000 ms  http 400 (contrato)        OK
+401 (contrato) -> 5 min                    300000 ms  http 401 (contrato)        OK
+404 (contrato) -> 5 min                    300000 ms  http 404 (contrato)        OK
+codec invalido (-4) -> 60 s                 60000 ms  codec: linha invalida      OK
+500 -> 2 s                                   2000 ms  http 500                   OK
+timeout (-1) -> 2 s                          2000 ms  rede/timeout               OK
+TODOS OS CASOS OK
+```
+
+### Como testar no Wokwi
+
+1. `'t'` no Serial:
+   ```
+   --- TESTE CODEC ---
+   CODEC evento  : OK (21 bytes) JSON OK
+   ...
+   CODEC: TODOS OK
+   ```
+   O hexdump de 21 B do evento e o de 29 B do boot devem aparecer.
+2. `'e'` uma vez → `resposta forcada = 500`. Na próxima tentativa:
+   `HTTP: forcado 500`, `ENVIO: http 500; ... proxima em 2 s`, depois 4, 8...
+3. `'e'` de novo → `400`: `ENVIO: http 400 (contrato); ... proxima em 300 s`.
+   O cursor **não** avança e a linha continua no arquivo.
+4. `'e'` de novo → `timeout` (volta imediatamente, sem esperar 8 s) e, de novo,
+   `ok` para voltar ao POST real.
+5. Com `ok`, comparar o corpo recebido no Webhook com a última linha do `'d'`:
+   para snapshots/eventos com `deltaTMs` múltiplo de 100 ms, o JSON é idêntico.
+6. `'i'` deve mostrar `ultimoErro` e `proximoEnvioEm` coerentes com o modo.
+
+### Critério de aceite do 6B
+
+`'t'` imprime OK nos três tipos com hexdump; o JSON do gateway é idêntico ao da
+linha no teste de host; `'e'` exercita ok/500/400/timeout; 400 não avança o
+cursor e retenta em 5 min: **passou no host; falta a confirmação visual no
+Wokwi**.
+
+### Riscos e lacunas
+
+- **`horaSincronizada` não está no quadro v1**: o gateway da simulação usa o
+  valor da linha. No gateway real, o campo precisa ser inferido/definido ou
+  entrar num v2.
+- **`deltaTMs` é quantizado em 0,1 s** no quadro; um evento com 3175 ms chega
+  como 3100 ms. O arquivo preserva o valor original. O teste `'t'` usa 3200 ms
+  para a comparação exata.
+- **`seqBase` é u16**: acima de 65.535 o JSON postado fica com o seq truncado
+  (o cursor continua usando o seq original).
+- **`flags` é global**: todos os registros do quadro compartilham origem e
+  coordenadas; o lote de 6 do INC 7 precisa respeitar isso.
+- **Linhas antigas** (anteriores ao `tipo`/`seq`/`bootId`/`origem`) não parseiam
+  e param a fila em `codec: linha invalida` (60 s). O arquivo atual não tem
+  essas linhas; a recuperação de linha truncada do INC 8 cobre outro caso.
+- **A resposta forçada do `'e'` não é persistida** e zera o backoff ao trocar de
+  modo; é uma ferramenta de teste.
+- O gateway só aceita `jardimIdx=0` (mapa 0 → `jardim-centro-01`) e `n=1`; o
+  lote entra no INC 7.
+- O diff do 6B ficou em +350; o bundle 6A+6B foi aprovado depois do aviso de que
+  o INC 6 completo passaria do teto.
