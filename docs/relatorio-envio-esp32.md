@@ -395,3 +395,96 @@ TODOS OS CASOS OK
   depois sem mudar a interface.
 - `falhasConsecutivas` não zera quando o Wi-Fi cai; ao reconectar, o backoff
   continua de onde parou (no máximo 60 s).
+
+## INC 6 — Codec binário v1
+
+O incremento completo (codec + gateway + `'t'`) passaria de ~350 linhas, então foi
+dividido:
+
+- **6A (esta entrega):** header `codec_quadro.h` com encode/decode e validação,
+  mais o teste de round-trip/layout no host.
+- **6B (próxima):** comando `'t'` no firmware, gateway local que decodifica o
+  quadro e posta o JSON, e comparação campo a campo com a linha do arquivo.
+
+### 6A — Mudanças
+
+- **Novo `esp32/src/codec_quadro.h`** (header-only, sem dependência de Arduino):
+  - `codec::Quadro` e `codec::Registro` com os campos do quadro v1.
+  - `tamanho()` valida e calcula o tamanho exato (14 B de cabeçalho + 7 B por
+    registro + 1 B de gap + 4 B de timestamp absoluto + 8 B de lat/lon no boot).
+  - `codificar()` escreve little-endian e devolve 0 se não couber ou for inválido.
+  - `decodificar()` rejeita versão, `n` fora de 1..6, tipo inválido, bateria
+    > 100, gap no primeiro registro, quadro truncado ou com byte sobrando.
+  - `seqBase` é o `seq` do primeiro registro; cada registro seguinte carrega
+    `gap` (quantos `seq` foram pulados) quando necessário.
+  - `dTs` é a diferença em segundos para `baseTs`; se negativa ou > 65534, usa
+    `0xFFFF` + u32 absoluto.
+- **`esp32/src/main_alt.cpp`:** apenas o `#include "codec_quadro.h"` (1 linha),
+  para o toolchain do ESP32 compilar o header. Nenhum comportamento mudou.
+
+### O que NÃO mudou
+
+Amostragem, histerese, períodos, limiares, pinos, persistência, compactação,
+transporte HTTPS, cursor, offline, backoff, `'d'`, `'L'`, `'i'`, `'o'` e o ramo
+LoRa. O firmware não usa o codec ainda; o envio continua postando a linha.
+
+### Evidência
+
+Build do firmware com o header incluído:
+
+```
+RAM:   [=         ]  14.5% (used 47596 bytes from 327680 bytes)
+Flash: [========  ]  76.2% (used 998133 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+Teste de host (`g++ -std=c++17 -Wall -Wextra`), com o header real:
+
+```
+evento (5 cm, delta 3,2 s)         21 bytes  OK
+  hex (21 bytes):
+    01 01 00 01 07 00 46 E6 8D 6F A3 2C D9 6A 00 00
+    00 05 64 20 00
+snapshot (10 cm, sem delta)        21 bytes  OK
+boot (coords 0,0)                  29 bytes  OK
+layout do cabecalho/registro       OK
+3 registros: gap=2 e ts absoluto   40 bytes  OK
+6 registros (56 bytes)             56 bytes  OK
+pior caso: 6 boots com extras     133 bytes  OK
+boot com lat/lon negativas         29 bytes  OK
+rejeita versao/n/tam/bateria/gap   OK
+TODOS OS CASOS OK
+```
+
+O hexdump do evento confere com o layout: versão `01`, flags `01` (simulada),
+`jardimIdx=00`, `n=01`, `seqBase=0007`, `bootId=6F8DE646` (LE `46 E6 8D 6F`),
+`baseTs=6AD92CA3` (LE `A3 2C D9 6A`), meta `00` (evento, sensor 0), `dTs=0000`,
+`nivel=05`, `bateria=64`, `deltaT=0020` (32 × 0,1 s).
+
+### Como testar (6A)
+
+Não há comando novo no firmware ainda. O teste é o host acima; para repetir:
+
+```
+g++ -std=c++17 -Wall -Wextra -o teste_codec teste_codec.cpp && ./teste_codec
+```
+
+### Critério de aceite do 6A
+
+Round-trip idêntico nos três tipos, layout little-endian conferido byte a byte,
+limite de 6 registros (56 B) e rejeição de quadros inválidos: **passou**.
+
+### Riscos e lacunas registradas
+
+- **`horaSincronizada` não existe no quadro v1.** O layout especificado não tem
+  bit para ele. No 6B, o gateway da simulação vai usar o valor da linha de
+  origem como metadado fora da banda, só para o JSON postado ficar idêntico ao
+  arquivo. No gateway real (LoRa), esse campo precisará ser inferido/definido
+  ou entrar num quadro v2; não inventei um bit novo.
+- `seqBase` é u16; um boot com mais de 65.535 registros truncaria a identidade.
+  Com snapshot de 5 s isso levaria ~91 h; registrado como limite do v1.
+- `flags` é global ao quadro: todos os registros compartilham `origem` e
+  `coordenadas`. No uso atual todos são da mesma origem; um lote misto exigiria
+  separar em quadros.
+- O decoder exige que o buffer termine exatamente no último registro; é
+  intencional para pegar erro de tamanho, mas rejeita padding futuro.

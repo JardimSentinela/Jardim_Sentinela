@@ -10,6 +10,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <Preferences.h>
+#include "codec_quadro.h"     // quadro binario v1 (INC 6)
 #if __has_include("secrets.h")
 #include "secrets.h"          // ignorado pelo git: URL, SSID e senha
 #else
