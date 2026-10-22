@@ -613,3 +613,129 @@ Wokwi**.
   lote entra no INC 7.
 - O diff do 6B ficou em +350; o bundle 6A+6B foi aprovado depois do aviso de que
   o INC 6 completo passaria do teto.
+
+---
+
+## INC 7A — Lote de até 6 e prefixo 2xx
+
+O INC 7 tem duas partes independentes. Esta entrega é o **7A**: transporte em
+lote e confirmação do maior prefixo 2xx. A **ordem de drenagem** (snapshot mais
+recente → boot → eventos FIFO → snapshots dizimados) e a dizimação ficam para o
+**7B**, porque mexem em como o cursor representa registros confirmados fora de
+ordem; o cursor continua conservador.
+
+### Mudanças em `esp32/src/main_alt.cpp` (+156 / −106)
+
+- `LoteLinhas` + `pularAteCursor` + `coletarLote` + `buscarLote`: coleta até 6
+  linhas **consecutivas** depois do cursor, todas do **mesmo boot**, com `seq`
+  crescente e gap ≤ 255. Se o cursor sumiu, reancora no início (como antes).
+- `tentarEnviarLote` (substitui `tentarEnviarPendente`): o `LoteLinhas` é
+  `static` (≈2 KB em BSS) para não somar à pilha do `WiFiClientSecure`;
+  monta um quadro com
+  `n` registros (1 a 6), codifica, decodifica no gateway local e faz **um POST
+  por registro**. O primeiro erro interrompe o lote.
+- Confirmação do **maior prefixo 2xx**: se os K primeiros registros voltarem
+  2xx, `confirmarCursor` avança para o K-ésimo e grava a NVS **uma vez**,
+  somando K em `confirmados`. Se K = 0, o cursor não muda.
+- Se K > 0 e o próximo falhou, o prefixo é confirmado e o backoff do erro é
+  agendado. O registro que falhou continua na fila.
+- O lote não mistura boots nem origem (`simulacao`/`campo`); a flag de
+  coordenadas é agregada (liga se algum registro for boot). Coordenadas só
+  aparecem no JSON do boot.
+- Logs: `ENVIO: lote K/N 2xx` ou `ENVIO: lote K/N 2xx (erro)`.
+- `enviarRegistro`, `gatewaySimulado`, `buscarPendente` e
+  `tentarEnviarPendente` foram removidos; o caminho agora é único.
+- O ramo `#else` (LoRa) ficou com o comentário de hardware: enviar o quadro e
+  confirmar o prefixo que o gateway reportar.
+
+### O que NÃO mudou
+
+Amostragem, histerese, períodos, limiares, pinos, persistência, compactação,
+formato do arquivo, cursor (continua `(bootId, seq)` do último confirmado em
+ordem de arquivo), offline, 429/Retry-After, 4xx em 5 min, `'d'`, `'L'`,
+`'i'`, `'o'`, `'e'`, `'t'` e o codec.
+
+### Evidência
+
+Build:
+
+```
+RAM:   [==        ]  15.2% (used 49692 bytes from 327680 bytes)
+Flash: [========  ]  76.6% (used 1003977 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+Seleção do lote (funções reais extraídas do firmware, `File` simulado):
+
+```
+sem cursor -> primeiros 6              n=6 seq=0..5 reanc=0  OK
+cursor no 0 -> 1..6                    n=6 seq=1..6 reanc=0  OK
+cursor no 2 -> 3..7 (5 restantes)      n=5 seq=3..7 reanc=0  OK
+cursor no ultimo -> nada               n=0 seq=0..0 reanc=0  OK
+cursor sumiu -> reancora no inicio     n=6 seq=0..5 reanc=1  OK
+troca de boot -> para antes do boot B  n=4 seq=0..3 reanc=0  OK
+gap 299 (>255) -> para                 n=1 seq=0..0 reanc=0  OK
+gap 255 (cabe em u8) -> 2              n=2 seq=0..256 reanc=0  OK
+seq repetido -> para                   n=1 seq=0..0 reanc=0  OK
+limite max=3                           n=3  OK
+TODOS OS CASOS OK
+```
+
+Prefixo 2xx (transporte simulado, JSON real do gateway):
+
+```
+6x 2xx -> confirma 6                     posts=6 conf=6 seq=10 agenda=0  OK
+2x 2xx + 429 -> prefixo 2                posts=3 conf=2 seq=6 agenda=429  OK
+400 no primeiro -> prefixo 0             posts=1 conf=0 seq=0 agenda=400  OK
+2xx + timeout -> prefixo 1               posts=2 conf=1 seq=5 agenda=-1  OK
+so 3 linhas -> n=3                       posts=3 conf=3 seq=7 agenda=0  OK
+sem pendentes -> nao posta               posts=0 conf=0 seq=0 agenda=0  OK
+linha invalida no meio -> n=2            posts=2 conf=2 seq=6 agenda=0  OK
+boot+evento+snapshot (coords so no boot) posts=3 conf=3  OK
+posts do caso 3 (ordem): 5 6 7
+TODOS OS CASOS OK
+```
+
+Quadro com 3 registros: 35 bytes, e o JSON de cada índice é idêntico à linha de
+origem (evento, snapshot, evento), incluindo os `seq` 5, 6 e 7.
+
+### Como testar no Wokwi
+
+1. Deixe acumular fila (`'o'` offline por alguns minutos) e volte online.
+2. O log deve mostrar lotes de 6: `ENVIO: lote 6/6 2xx`, depois o próximo lote,
+   até `pendentes=0`. Cada lote faz 6 POSTs (o Webhook recebe 6 corpos).
+3. `'d'` lista o arquivo; `'i'` mostra `confirmados` e `pendentes`. O cursor
+   avança em blocos de 6.
+4. `'e'` uma vez (500): o próximo lote para no primeiro POST,
+   `ENVIO: lote 0/6 2xx (http 500)`, cursor parado, backoff 2 s.
+5. Para ver um prefixo parcial sem depender do receptor, o teste de host cobre
+   2x 2xx + 429; no Wokwi o 429/erro no meio é difícil de forçar.
+6. Meça o tempo de drenagem: `N` pendentes / 6 × tempo de um POST.
+
+### Critério de aceite do 7A
+
+Lote de até 6, sem misturar boot/origem, confirmação do maior prefixo 2xx e
+cursor avançando só até o último confirmado: **passou no host**. Falta observar
+os lotes no Wokwi. A **ordem** do INC 7 ainda não está implementada (7B).
+
+### Riscos e lacunas
+
+- **6 POSTs seguidos bloqueiam o loop**: no pior caso (timeout de 8 s) são ~48 s
+  sem amostrar. O `delay()` não existe, mas a chamada HTTP é síncrona; uma fila
+  de envio em outra task resolveria. O lote de 1 do INC 5 já tinha esse risco,
+  menor.
+- **Sem jitter** no backoff (pendente desde o INC 5).
+- **Sem ordem/dizimação**: o 7A envia em ordem de arquivo. O snapshot mais
+  recente, o boot e a dizimação entram no 7B.
+- **Só o mesmo boot**: um quadro tem `bootId` único; ao trocar de boot, o lote
+  para antes. Isso é correto para o formato v1.
+- **Gap > 255** ou `seq` fora de ordem/duplicado: o lote para antes; a próxima
+  tentativa começa naquela linha. Gap maior que 255 exige um quadro só para o
+  salto (não implementado; o normal é 1 em 1).
+- **`seqBase` u16**: após 65.535 registros no mesmo boot o `seq` do JSON trunca
+  (cursor continua com o original). Limite do v1.
+- **Linha inválida no meio**: o prefixo válido é confirmado e a inválida para o
+  próximo lote em `codec: linha invalida` (60 s).
+- **Prefixo só é observável na simulação**: no ramo LoRa quem sabe quantos
+  registros o gateway postou é o gateway; o firmware precisaria receber esse
+  número no ack.

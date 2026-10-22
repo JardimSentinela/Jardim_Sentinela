@@ -908,11 +908,12 @@ static bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaS
   return true;
 }
 
-// Reconstroi o JSON a partir do quadro decodificado, na MESMA ordem de campos
-// do arquivo. "horaSinc" vem da linha original (o quadro v1 nao o carrega).
-static bool montarJsonGateway(const codec::Quadro& q, bool horaSinc, char* out, size_t tam) {
-  if (q.n != 1 || q.jardimIdx != 0) return false;
-  const codec::Registro& r = q.regs[0];
+// Reconstroi o JSON do registro "idx" a partir do quadro decodificado, na
+// MESMA ordem de campos do arquivo. "horaSinc" vem da linha original (o quadro
+// v1 nao o carrega).
+static bool montarJsonGateway(const codec::Quadro& q, int idx, bool horaSinc, char* out, size_t tam) {
+  if (idx < 0 || idx >= q.n || q.jardimIdx != 0) return false;
+  const codec::Registro& r = q.regs[idx];
   const char* tipo = (r.tipo == codec::EVENTO) ? TIPO_EVENTO
                    : (r.tipo == codec::SNAPSHOT) ? TIPO_SNAPSHOT : TIPO_BOOT;
   char idSensor[16];
@@ -955,29 +956,6 @@ static bool montarJsonGateway(const codec::Quadro& q, bool horaSinc, char* out, 
            CAMPO_HORA_SINC, horaSinc ? "true" : "false", CAMPO_ORIGEM, origem);
   anexar(out, tam, usado, parte);
   return usado > 0 && usado < tam - 1;
-}
-
-// Caminho da simulacao: monta o quadro, decodifica e devolve o JSON do POST.
-static bool gatewaySimulado(const char* linha, char* json, size_t tam) {
-  codec::Quadro q;
-  bool horaSinc = false;
-  if (!montarQuadroDaLinha(linha, &q, &horaSinc)) {
-    Serial.println("CODEC: linha invalida");
-    return false;
-  }
-  uint8_t quadro[codec::MAX_COM_EXTRAS];
-  size_t n = codec::codificar(q, quadro, sizeof(quadro));
-  if (n == 0) { Serial.println("CODEC: falha ao codificar"); return false; }
-  codec::Quadro d;
-  if (!codec::decodificar(quadro, n, &d)) {
-    Serial.println("CODEC: falha ao decodificar");
-    return false;
-  }
-  if (!montarJsonGateway(d, horaSinc, json, tam)) {
-    Serial.println("CODEC: falha ao montar JSON");
-    return false;
-  }
-  return true;
 }
 
 // Hexdump compacto do teste 't' (16 bytes por linha).
@@ -1038,7 +1016,7 @@ static bool testarCodec(const char* nome, const Evento& e, const char* tsTexto) 
             d.regs[0].lon == r.lon && d.regs[0].coords == r.coords;
 
   char gateway[TAMANHO_LINHA];
-  bool jsonOk = ok && montarJsonGateway(d, e.relogioValido, gateway, sizeof(gateway)) &&
+  bool jsonOk = ok && montarJsonGateway(d, 0, e.relogioValido, gateway, sizeof(gateway)) &&
                 strcmp(original, gateway) == 0;
   Serial.printf("CODEC %-8s: %s (%u bytes) JSON %s\n",
                 nome, ok ? "OK" : "FALHOU", (unsigned)n, jsonOk ? "OK" : "FALHOU");
@@ -1119,35 +1097,6 @@ static int postarLinha(const char* linha) {
   return codigo;
 }
 
-// Entrega uma linha ao transporte. Offline devolve false na hora ('o'), sem
-// rede; "codigo" só é preenchido quando houve tentativa HTTP de fato.
-static bool enviarRegistro(const char* linha, int* codigo) {
-  *codigo = 0;
-  if (g_offline) return false;
-  if (g_wifi != WIFI_CONECTADO) return false;
-  g_envio.tentativas++;
-
-#ifdef SIMULATION
-  // Gateway local: decodifica o quadro e posta o JSON (sem rádio no Wokwi).
-  char json[TAMANHO_LINHA];
-  if (!gatewaySimulado(linha, json, sizeof(json))) {
-    *codigo = -4;
-    g_envio.falhas++;
-    return false;
-  }
-  *codigo = postarLinha(json);
-#else
-  // NÃO COMPILADO NO WOKWI — validar no hardware: o quadro segue pelo rádio e
-  // o gateway remoto decodifica e posta. Sem rádio aqui, não há envio.
-  (void)linha;
-  *codigo = -4;
-#endif
-
-  if (*codigo >= 200 && *codigo < 300) return true;
-  g_envio.falhas++;
-  return false;
-}
-
 // Backoff exponencial das falhas transitórias: 2, 4, 8, 16, 32, 60, 60... s.
 static uint32_t backoffMs(uint32_t falhas) {
   uint32_t ms = 2000;
@@ -1200,57 +1149,74 @@ static void agendarNovaTentativa(int codigo) {
                 (unsigned long)(espera / 1000));
 }
 
-// Procura a primeira linha depois do cursor. Devolve 1 com a linha e a chave;
-// 0 se não há pendente. Se o cursor sumiu (compactação), reancora no início.
-static int buscarPendente(char* alvo, size_t tam, char* bootAlvo, uint32_t* seqAlvo) {
-  File f = LittleFS.open(ARQ_FILA, "r");
-  if (!f) return 0;
+// ===== LOTE (INC 7A) =========================================================
+// Até 6 linhas consecutivas do mesmo boot, com seq crescente e gap <= 255.
+struct LoteLinhas {
+  char linha[6][TAMANHO_LINHA + 16];
+  char boot[6][9];
+  uint32_t seq[6];
+  int n;
+};
+
+// Posiciona o arquivo logo após o cursor; false se a chave sumiu.
+static bool pularAteCursor(File& f) {
+  if (!g_ackValido) return true;
   char linha[TAMANHO_LINHA + 16];
-  char primeira[TAMANHO_LINHA + 16];
   char boot[9];
   uint32_t seq = 0;
-  bool temPrimeira = false;
-  bool cursorAchado = !g_ackValido;
-  bool achou = false;
-
   while (lerLinha(f, linha, sizeof(linha))) {
     if (!extrairChave(linha, boot, &seq)) continue;
-    if (!temPrimeira) {
-      strncpy(primeira, linha, sizeof(primeira) - 1);
-      primeira[sizeof(primeira) - 1] = '\0';
-      temPrimeira = true;
-    }
-    if (cursorAchado) {
-      strncpy(alvo, linha, tam - 1);
-      alvo[tam - 1] = '\0';
-      memcpy(bootAlvo, boot, 9);
-      *seqAlvo = seq;
-      achou = true;
-      break;
-    }
-    if (strcmp(boot, g_ackBootId) == 0 && seq == g_ackSeq) cursorAchado = true;
+    if (strcmp(boot, g_ackBootId) == 0 && seq == g_ackSeq) return true;
   }
-  f.close();
+  return false;
+}
 
-  if (achou) return 1;
-  if (g_ackValido && !cursorAchado && temPrimeira) {
-    strncpy(alvo, primeira, tam - 1);
-    alvo[tam - 1] = '\0';
-    if (!extrairChave(alvo, bootAlvo, seqAlvo)) return 0;
+// Lê do arquivo (já posicionado) até "max" linhas do mesmo boot.
+static void coletarLote(File& f, LoteLinhas* lote, int max) {
+  char linha[TAMANHO_LINHA + 16];
+  char boot[9];
+  uint32_t seq = 0;
+  while (lote->n < max && lerLinha(f, linha, sizeof(linha))) {
+    if (!extrairChave(linha, boot, &seq)) continue;
+    if (lote->n > 0) {
+      if (strcmp(boot, lote->boot[0]) != 0) break;   // não mistura boots
+      uint32_t anterior = lote->seq[lote->n - 1];
+      if (seq <= anterior) break;                    // fora de ordem/duplicata
+      if (seq - anterior - 1 > 255) break;           // gap não cabe em u8
+    }
+    strncpy(lote->linha[lote->n], linha, sizeof(lote->linha[0]) - 1);
+    lote->linha[lote->n][sizeof(lote->linha[0]) - 1] = '\0';
+    memcpy(lote->boot[lote->n], boot, 9);
+    lote->seq[lote->n] = seq;
+    lote->n++;
+  }
+}
+
+// Monta o lote a partir do cursor; se a chave sumiu, reancora e conta.
+static int buscarLote(LoteLinhas* lote, int max) {
+  lote->n = 0;
+  File f = LittleFS.open(ARQ_FILA, "r");
+  if (!f) return 0;
+  if (!pularAteCursor(f)) {
+    f.close();
     g_reancoragens++;
     Serial.println("ENVIO: cursor nao encontrado; reancorando no inicio");
-    return 1;
+    f = LittleFS.open(ARQ_FILA, "r");
+    if (!f) return 0;
   }
-  return 0;
+  coletarLote(f, lote, max);
+  f.close();
+  return lote->n;
 }
 
 // Avança o cursor só depois do 2xx e grava na NVS. Duplicata é aceitável.
-static void confirmarCursor(const char* bootId, uint32_t seq) {
+// "quantidade" é o número de registros do lote confirmados de uma vez.
+static void confirmarCursor(const char* bootId, uint32_t seq, int quantidade) {
   memcpy(g_ackBootId, bootId, 8);
   g_ackBootId[8] = '\0';
   g_ackSeq = seq;
   g_ackValido = true;
-  g_envio.confirmados++;
+  g_envio.confirmados += (uint32_t)quantidade;
   Preferences p;
   if (!p.begin(NVS_ESPACO, false)) { Serial.println("NVS: falha ao gravar cursor"); return; }
   p.putString(NVS_ACK_BOOT, g_ackBootId);
@@ -1260,26 +1226,110 @@ static void confirmarCursor(const char* bootId, uint32_t seq) {
 
 // Tenta enviar o próximo pendente. Sem pendente, libera a varredura; em falha,
 // aplica o backoff classificado pelo código HTTP ou pelo erro de rede.
-static void tentarEnviarPendente() {
-  char linha[TAMANHO_LINHA + 16];
-  char boot[9];
-  uint32_t seq = 0;
-  if (buscarPendente(linha, sizeof(linha), boot, &seq) != 1) {
+// Tenta enviar um lote de até 6 registros: monta o quadro, o gateway local
+// decodifica e posta um JSON por registro; confirma o maior prefixo 2xx e
+// avança o cursor até o último confirmado. Em falha, aplica o backoff.
+static void tentarEnviarLote() {
+  // Estático para não somar ~2 KB de pilha ao WiFiClientSecure/HTTPClient.
+  static LoteLinhas lote;
+  int achadas = buscarLote(&lote, 6);
+  if (achadas == 0) {
     g_temPendente = false;
     return;
   }
-  int codigo = 0;
-  if (!enviarRegistro(linha, &codigo)) {
-    if (codigo != 0) agendarNovaTentativa(codigo);
+
+  codec::Quadro q{};
+  bool horaSinc[6] = {false};
+  int n = 0;
+  for (int i = 0; i < achadas; i++) {
+    codec::Quadro uma;
+    bool hs = false;
+    if (!montarQuadroDaLinha(lote.linha[i], &uma, &hs)) break;
+    if (n == 0) {
+      q.flags = uma.flags;
+      q.jardimIdx = uma.jardimIdx;
+      q.seqBase = uma.seqBase;
+      q.bootId = uma.bootId;
+      q.baseTs = uma.baseTs;
+    } else if (uma.bootId != q.bootId ||
+               ((uma.flags ^ q.flags) & codec::FLAG_SIMULACAO)) {
+      break;  // não mistura boots/origens no mesmo quadro
+    } else {
+      q.flags |= uma.flags;  // liga coords se algum boot do lote tiver
+    }
+    q.regs[n] = uma.regs[0];
+    horaSinc[n] = hs;
+    n++;
+  }
+
+  if (n == 0) {
+    Serial.println("ENVIO: primeira linha do lote invalida");
+    g_envio.falhas++;
+    agendarNovaTentativa(-4);
     return;
   }
-  if (g_falhasConsecutivas > 0) {
-    Serial.printf("ENVIO: recuperado apos %lu falhas\n", (unsigned long)g_falhasConsecutivas);
+  q.n = (uint8_t)n;
+
+  uint8_t quadro[codec::MAX_COM_EXTRAS];
+  size_t tam = codec::codificar(q, quadro, sizeof(quadro));
+  if (tam == 0) {
+    Serial.println("ENVIO: falha ao codificar o lote");
+    g_envio.falhas++;
+    agendarNovaTentativa(-4);
+    return;
+  }
+
+#ifdef SIMULATION
+  codec::Quadro d;
+  if (!codec::decodificar(quadro, tam, &d)) {
+    Serial.println("ENVIO: falha ao decodificar o lote");
+    g_envio.falhas++;
+    agendarNovaTentativa(-4);
+    return;
+  }
+
+  // Gateway local: um POST por registro, na ordem do quadro. O prefixo 2xx é
+  // o que o cursor pode confirmar; o primeiro erro interrompe o lote.
+  int confirmados = 0;
+  int codigo = 0;
+  for (int i = 0; i < d.n; i++) {
+    char json[TAMANHO_LINHA];
+    if (!montarJsonGateway(d, i, horaSinc[i], json, sizeof(json))) {
+      codigo = -4;
+      g_envio.falhas++;
+      break;
+    }
+    g_envio.tentativas++;
+    codigo = postarLinha(json);
+    if (codigo >= 200 && codigo < 300) { confirmados++; continue; }
+    g_envio.falhas++;
+    break;
+  }
+
+  if (confirmados > 0) {
+    confirmarCursor(lote.boot[confirmados - 1], lote.seq[confirmados - 1], confirmados);
+  }
+
+  if (confirmados == d.n) {
+    if (g_falhasConsecutivas > 0) {
+      Serial.printf("ENVIO: recuperado apos %lu falhas\n", (unsigned long)g_falhasConsecutivas);
+    }
     g_falhasConsecutivas = 0;
     g_proximaTentativaMs = 0;
+    snprintf(g_ultimoErro, sizeof(g_ultimoErro), "nenhum");
+    Serial.printf("ENVIO: lote %d/%d 2xx\n", confirmados, d.n);
+  } else {
+    agendarNovaTentativa(codigo);
+    Serial.printf("ENVIO: lote %d/%d 2xx (%s)\n", confirmados, d.n, g_ultimoErro);
   }
-  snprintf(g_ultimoErro, sizeof(g_ultimoErro), "nenhum");
-  confirmarCursor(boot, seq);
+#else
+  // NÃO COMPILADO NO WOKWI — validar no hardware: enviar o quadro pelo rádio e
+  // confirmar o prefixo que o gateway reportar. Sem rádio aqui, não há envio.
+  (void)quadro;
+  (void)tam;
+  g_envio.falhas++;
+  agendarNovaTentativa(-4);
+#endif
 }
 
 // Comando 'o': alterna o modo offline lógico; o arquivo continua crescendo.
@@ -1379,11 +1429,11 @@ void loop() {
     else if (c == 't') rodarTesteCodec();
   }
 
-  // ENVIO (INC 4): varre o arquivo e manda o próximo não confirmado. Offline
-  // ou sem Wi-Fi não tenta; falha impõe pausa fixa (o backoff entra no INC 5).
+  // ENVIO (INC 7A): varre o arquivo e manda um lote de até 6 não confirmados.
+  // Offline ou sem Wi-Fi não tenta; falha impõe o backoff.
   if (g_temPendente && !g_offline && g_wifi == WIFI_CONECTADO &&
       (int32_t)(millis() - g_proximaTentativaMs) >= 0) {
-    tentarEnviarPendente();
+    tentarEnviarLote();
   }
 
   // Sem delay(): o loop não bloqueia (critério 12). A amostragem tem
