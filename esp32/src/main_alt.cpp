@@ -150,6 +150,22 @@ struct ContadoresEnvio {
 };
 static ContadoresEnvio g_envio = {0, 0, 0, 0, 0};
 
+// INC 8B: latencia criacao->2xx medida por epoch, em segundos. O anel guarda
+// as ultimas 128 confirmacoes do boot corrente; os demais casos sao contados
+// como desconhecidos (horaSincronizada:false) ou fora do boot corrente.
+static const uint8_t LATENCIAS_MAX = 128;
+static uint32_t g_latSeg[LATENCIAS_MAX];
+static uint8_t  g_latN = 0;
+static uint8_t  g_latProx = 0;
+static uint32_t g_latDesconhecidas = 0;
+static uint32_t g_latForaBoot = 0;
+static void zerarLatencia() {
+  g_latN = 0;
+  g_latProx = 0;
+  g_latDesconhecidas = 0;
+  g_latForaBoot = 0;
+}
+
 // Estado do Wi-Fi, avançado por atualizarWifi() no loop (nunca bloqueia).
 enum EstadoWifi : uint8_t { WIFI_OCIOSO, WIFI_CONECTANDO, WIFI_CONECTADO };
 static EstadoWifi g_wifi = WIFI_OCIOSO;
@@ -722,6 +738,7 @@ void limparFila() {
   LittleFS.remove(ARQ_TMP);
   descartados = 0;
   g_envio.perdidos = 0;  // comeca uma contabilidade nova junto com o arquivo
+  zerarLatencia();       // o teste de 20 min comeca com p50/p95 limpos
   arquivoPodeTerLinhaParcial = false;
 
   // INC 7B: o arquivo sumiu, entao o conjunto de confirmados fora de ordem e a
@@ -833,6 +850,48 @@ static uint32_t contarPendentes() {
   return cursorAchado ? depois : total;
 }
 
+// Guarda uma amostra de latencia (segundos) no anel; sobrescreve a mais antiga.
+static void registrarLatencia(uint32_t segundos) {
+  g_latSeg[g_latProx] = segundos;
+  g_latProx = (uint8_t)((g_latProx + 1) % LATENCIAS_MAX);
+  if (g_latN < LATENCIAS_MAX) g_latN++;
+}
+
+// Classifica a confirmacao de um registro e, quando aplicavel, mede
+// agora_epoch - timestamp_epoch. So entra no p50/p95 o boot corrente com
+// horaSincronizada:true; os demais sao contados e ficam como desconhecidos.
+static void registrarLatenciaDoRegistro(const codec::Registro& r, bool horaSinc, const char* boot) {
+  if (!horaSinc) { g_latDesconhecidas++; return; }
+  if (strcmp(boot, g_bootId) != 0) { g_latForaBoot++; return; }
+  time_t agora = time(nullptr);
+  if (agora < EPOCH_MINIMO_VALIDO || r.ts < (uint32_t)EPOCH_MINIMO_VALIDO) {
+    g_latDesconhecidas++;
+    return;
+  }
+  uint32_t seg = (agora >= (time_t)r.ts) ? (uint32_t)(agora - (time_t)r.ts) : 0;
+  registrarLatencia(seg);
+}
+
+// Percentil por posto mais proximo (nearest-rank). Devolve 0 sem amostras.
+static uint32_t percentilLatencia(uint8_t p) {
+  if (g_latN == 0) return 0;
+  uint32_t copia[LATENCIAS_MAX];
+  memcpy(copia, g_latSeg, (size_t)g_latN * sizeof(uint32_t));
+  for (uint8_t i = 1; i < g_latN; i++) {
+    uint32_t chave = copia[i];
+    int j = (int)i - 1;
+    while (j >= 0 && copia[j] > chave) {
+      copia[j + 1] = copia[j];
+      j--;
+    }
+    copia[j + 1] = chave;
+  }
+  uint32_t idx = ((uint32_t)g_latN * p + 99) / 100;
+  if (idx == 0) idx = 1;
+  if (idx > g_latN) idx = g_latN;
+  return copia[idx - 1];
+}
+
 // Comando 'i': estado do arquivo e contadores do envio. "pendentes" é o que
 // ainda não foi confirmado; o cursor identifica o último 2xx (bootId/seq).
 void imprimirDiagnostico() {
@@ -867,6 +926,15 @@ void imprimirDiagnostico() {
   Serial.printf("proximoEnvioEm: %ld s\n", restante > 0 ? (long)(restante / 1000) : 0L);
   Serial.printf("descartados: %lu\n", (unsigned long)descartados.load());
   Serial.printf("perdidosNaoConfirmados: %lu\n", (unsigned long)g_envio.perdidos);
+  if (g_latN == 0) {
+    Serial.printf("latencia: desconhecida (0 amostras; desconhecidas=%lu; foraBoot=%lu)\n",
+                  (unsigned long)g_latDesconhecidas, (unsigned long)g_latForaBoot);
+  } else {
+    Serial.printf("latencia: p50=%lu s p95=%lu s amostras=%u desconhecidas=%lu foraBoot=%lu\n",
+                  (unsigned long)percentilLatencia(50), (unsigned long)percentilLatencia(95),
+                  (unsigned)g_latN, (unsigned long)g_latDesconhecidas,
+                  (unsigned long)g_latForaBoot);
+  }
   Serial.printf("bootId: %s\n", g_bootId);
   Serial.printf("relogio: %s\n", relogioValido() ? "valido" : "invalido");
 }
@@ -1671,7 +1739,11 @@ static void tentarEnviarLote() {
     }
     g_envio.tentativas++;
     codigo = postarLinha(json);
-    if (codigo >= 200 && codigo < 300) { confirmados++; continue; }
+    if (codigo >= 200 && codigo < 300) {
+      registrarLatenciaDoRegistro(d.regs[i], horaSinc[i], lote.boot[i]);
+      confirmados++;
+      continue;
+    }
     g_envio.falhas++;
     break;
   }

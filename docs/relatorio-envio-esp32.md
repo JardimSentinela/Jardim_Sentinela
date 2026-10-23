@@ -1132,9 +1132,154 @@ copiadas de `main_alt.cpp` para um `.inc` em `/tmp/opencode`, com `File`,
 
 ### Próximo
 
-**8B**: medir a latência criação→2xx por epoch (somente registros com
-`horaSincronizada:true` e do boot corrente; os demais ficam como
-`desconhecida`) e imprimir p50/p95 no `'i'`. **8C**: executar o protocolo de
-20 min offline e fechar a tabela dos 12 critérios finais.
+**8B**: implementado na seção seguinte (latência criação→2xx, p50/p95 no
+`'i'`). **8C**: executar o protocolo de 20 min offline e fechar a tabela dos 12
+critérios finais.
+
+> Sem commit, merge ou push nesta etapa.
+
+---
+
+## INC 8B — Latência criação→2xx
+
+### Objetivo
+
+Medir, por epoch, o tempo entre a criação do registro e o seu 2xx, e mostrar
+p50/p95 no `'i'`, restringindo a amostra ao **boot corrente** com
+`horaSincronizada:true`.
+
+### Mudanças em `esp32/src/main_alt.cpp` (+73 / −1, já sobre o 8A commitado)
+
+| Item | Detalhe |
+|---|---|
+| `LATENCIAS_MAX = 128` | Anel fixo de 128 amostras (`g_latSeg`), sem alocação dinâmica. Guarda as confirmações mais recentes. |
+| `g_latN`, `g_latProx` | Quantidade preenchida e próxima posição do anel. Ao encher, a amostra mais antiga é sobrescrita. |
+| `g_latDesconhecidas` | Confirmações sem medição: `horaSincronizada:false`, relógio inválido no 2xx ou timestamp inválido. |
+| `g_latForaBoot` | Confirmações de outro `bootId` (boot antigo): ficam fora do p50/p95 por causa do critério 10. |
+| `registrarLatencia(segundos)` | Insere no anel e avança `g_latProx`; não bloqueia e não usa `String`. |
+| `registrarLatenciaDoRegistro(r, horaSinc, boot)` | Filtra: `horaSinc=false` → desconhecida; `boot != g_bootId` → fora do boot; relógio/timestamp inválidos → desconhecida; senão calcula `max(0, agora_epoch − r.ts)`. |
+| `percentilLatencia(p)` | Copia as amostras ativas, ordena por inserção e usa posto mais próximo (nearest-rank). `p50`/`p95` em segundos. |
+| `'i'` | Nova linha `latencia: p50=... s p95=... s amostras=N desconhecidas=D foraBoot=F`; sem amostras, imprime `latencia: desconhecida (...)`. |
+| `'L'` | Chama `zerarLatencia()`: o teste de 20 min começa com p50/p95 limpos. |
+| `tentarEnviarLote()` | A cada 2xx, chama `registrarLatenciaDoRegistro(d.regs[i], horaSinc[i], lote.boot[i])`, antes de contabilizar o confirmado. |
+
+### O que NÃO mudou
+
+Amostragem, histerese, debounce, patamares, pinos, períodos, formato NDJSON,
+cursor NVS, ordem do 7B (âncora → boot corrente → eventos FIFO → backfill
+dizimado), codec v1, `'x'`/`'f'` do 8A, `'d'`, `'L'`, `'o'`, `'e'`, `'t'` e o
+ramo LoRa do `SIMULATION`.
+
+### Como testar no hardware/Wokwi
+
+1. Build/upload; abra o monitor em 115200. Confirme que o NTP venceu
+   (`HORA: fonte=ntp ...` ou `fonte=http ...`).
+2. Faça uma drenagem normal e pressione `'i'`:
+   `latencia: p50=X s p95=Y s amostras=N desconhecidas=D foraBoot=F`.
+3. **Backlog:** `'o'` offline por ~2 min, `'o'` online e deixe drenar. O p50/p95
+   deve subir porque a latência inclui o tempo parado; os snapshots dizimados
+   não entram, só os efetivamente confirmados.
+4. **Falha:** `'e'` uma vez (500), depois `'e'` até `ok`. Os 500/400/timeout não
+   geram amostra; o `'i'` deve manter `amostras` e `desconhecidas` coerentes.
+5. **`'L'`:** zera `latencia`, `descartados` e `perdidosNaoConfirmados`; use
+   antes do protocolo de 20 min do 8C.
+6. **Boot antigo:** após um reset, as linhas do boot anterior que ainda
+   drenarem entram em `foraBoot`, não no p50/p95.
+7. **Hora não sincronizada:** as primeiras linhas do boot, criadas antes do
+   NTP/Date, entram em `desconhecidas`.
+
+### Evidência
+
+Build limpo:
+
+```
+RAM:   [==        ]  15.5% (used 50740 bytes from 327680 bytes)
+Flash: [========  ]  76.9% (used 1008577 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+Teste de host com as funções **extraídas do firmware**
+(`zerarLatencia`, `registrarLatencia`, `registrarLatenciaDoRegistro`,
+`percentilLatencia`) e `time()` controlado:
+
+```
+== 1. sem amostras ==
+OK   n=0
+OK   p50=0
+OK   p95=0
+== 2. 1..100: p50/p95 nearest-rank ==
+OK   p50=50
+OK   p95=95
+== 3. anel de 128: ultimas amostras ==
+OK   p50=136
+OK   p95=194
+== 4. filtros de boot e horaSincronizada ==
+OK   horaSinc=false -> desconhecida
+OK   boot antigo -> foraBoot
+OK   boot corrente: 100 s
+OK   timestamp futuro -> 0 s
+OK   relogio invalido no 2xx -> desconhecida
+OK   timestamp invalido -> desconhecida
+== 5. zerarLatencia limpa tudo ==
+OK   contadores zerados
+== 6. duas amostras ==
+OK   p50=10
+OK   p95=20
+== 7. 128 amostras iguais ==
+OK   p50=42
+OK   p95=42
+TODOS OS CENARIOS OK
+```
+
+O teste confirma o posto mais próximo: para 100 amostras `1..100`, p50=50 e
+p95=95; depois de 200 inserções no anel de 128, sobram `73..200`, com p50=136
+e p95=194.
+
+### Critério de aceite do 8B
+
+- p50/p95 calculados por posto mais próximo e limitados ao anel: **passou no
+  host**.
+- Só entram amostras do boot corrente com `horaSincronizada:true`; os demais
+  são contados como desconhecidos/fora do boot: **passou no host**.
+- `'i'` imprime a linha de latência: **implementado; falta a leitura no
+  hardware**.
+- `'L'` zera a medição: **passou no host** para `zerarLatencia()`; falta a
+  confirmação no Wokwi.
+- Build limpo: **passou**.
+
+O p50/p95 real do protocolo de 20 min fica para o **8C**, que também precisa de
+um receptor com 2xx disponível (a cota do Webhook.site continua esgotada).
+
+### Riscos e limitações do 8B
+
+- **Resolução de 1 s**: o timestamp do arquivo é epoch em segundos; POSTs
+  rápidos aparecem como 0 s. A latência é `agora − timestamp`, não inclui
+  subsegundo.
+- **Anel de 128**: p50/p95 são das últimas 128 confirmações, não da vida toda.
+  No teste de 20 min, a política do 7B envia poucas dezenas, então todas cabem;
+  em execuções longas o anel passa a ser uma janela móvel.
+- **Latência de backlog**: inclui o tempo offline e a espera dos POSTs
+  anteriores do mesmo lote; é exatamente "criação→2xx", não "tempo de rede".
+- **Duplicatas**: um registro reenviado após reboot/falha gera nova amostra;
+  retries podem puxar o p50/p95 para cima.
+- **Boot antigo**: linhas de `bootId` anterior são excluídas do p50/p95
+  (`foraBoot`), mesmo com `horaSincronizada:true`, para cumprir o critério 10.
+- **`horaSincronizada:false`**: o timestamp de fallback é grande e parecido com
+  epoch, mas não é hora real; por isso essas linhas nunca entram na medição.
+- **Ajuste de relógio**: se o relógio recuar, `agora < timestamp` vira 0 s;
+  não há latência negativa.
+- **`'L'`**: zera a medição, mas não zera `g_envio.confirmados`/`tentativas`
+  (comportamento herdado do 8A); a linha de latência é independente.
+- **Ramo LoRa**: a medição está no caminho `SIMULATION`, onde o gateway local
+  devolve o 2xx. No rádio real, o gateway precisaria reportar o ack para o
+  firmware; isso continua fora do escopo.
+
+### Próximo
+
+**8C**: executar o protocolo de 20 min offline (com `'L'` antes, `'o'`
+offline, depois `'o'` online), registrar tempo de drenagem, p50/p95, duplicatas
+por `(bootId, seq)` e preencher a tabela dos 12 critérios finais. O `'u'` (URL
+inválida) da seção 6 da especificação continua pendente; pode entrar no 8C se
+você quiser exercitar DNS/TLS reais.
 
 > Sem commit, merge ou push nesta etapa.
