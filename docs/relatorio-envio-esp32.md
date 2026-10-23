@@ -1370,40 +1370,58 @@ política de backfill que manda 1 snapshot a cada 10.
 
 ### Evidência de host — seca de 20 min
 
-Para validar a política sem esperar 20 min reais, foi montado um arquivo com
-**241 registros**: 1 boot (`seq 0`), 237 snapshots e 3 eventos (`seq 10/50/100`).
-As funções de seleção do 7B foram **extraídas do firmware** e executadas com
-um `File`/`LittleFS` fake; todos os lotes foram confirmados com 2xx.
+Esta verificação agora é automatizada pela suíte versionada em
+`esp32/test/host/`. Ela extrai as funções reais do firmware, compila no host e
+não espera 20 min reais:
+
+```bash
+cd esp32
+python3 test/host/run_tests.py
+```
+
+A seca monta um arquivo com **241 registros**: 1 boot (`seq 0`), 237 snapshots e
+3 eventos (`seq 10/50/100`). As funções de seleção do 7B são **extraídas de
+`src/main_alt.cpp`** e executadas com um `File`/`LittleFS` fake; todos os lotes
+são confirmados com 2xx.
 
 ```text
-rodadas=6 enviados=25 unicos=25 duplicatas=0 dizimados=216
-cursor=AAAA0001/240 resolvidos=0 reancoragens=0
-
-OK   primeiro enviado e a ancora snapshot 240
-OK   25 registros efetivamente enviados
-OK   25 chaves unicas, sem duplicata
-OK   216 snapshots dizimados pela politica
-OK   cursor final em 240
-OK   conjunto de resolvidos vazio no fim
-OK   sem reancoragem (cursor nunca sumiu)
-OK   boot 0 enviado no lote 1
-OK   eventos 10/50/100 enviados
-OK   todos os snapshots mantidos (20..240, exceto 50/100) foram enviados
-
+[drenagem_20min] == 1. 20 min offline, todos os lotes com 2xx ==
+OK   normal: 25 registros enviados
+OK   normal: 25 chaves unicas
+OK   normal: sem duplicatas
+OK   normal: 216 snapshots dizimados
+OK   normal: cursor final em 240
+OK   normal: 6 rodadas
+OK   normal: ancora 240 e o primeiro enviado
+OK   normal: boot e eventos 10/50/100 enviados
+OK   normal: todos os mantidos foram enviados
 contabilidade: 241 gerados = 25 enviados + 216 dizimados
+== 2. primeiro lote falha (500/timeout), depois recupera ==
+OK   falha ocorreu na ancora 240
+OK   falha nao avancou cursor nem dizimou nada
+OK   retry: 25 registros enviados
+OK   retry: 7 rodadas
+OK   retry entregou exatamente o mesmo conjunto, sem perda
+== 3. perda do cursor depois de drenar: duplicatas por chave ==
+OK   reenvio manteve 25 registros e 216 dizimados
+OK   as 25 chaves (bootId/seq) identificam as duplicatas
 TODOS OS CENARIOS OK
 ```
 
 Isso cobre a **ordem** (âncora 240 primeiro; boot e eventos do boot corrente
 depois; backfill dizimado por último), a **cobertura** dos mantidos e a
-**contabilidade** `241 = 25 + 216`, sem duplicatas e sem reancoragem. Nesta seca
-não houve fila cheia nem compactação, então `descartados = 0`; a equação geral
-inclui esse termo e `pendentes`. A seca não substitui a execução real: não mede
-rede, tempo de drenagem nem duplicatas por reboot.
+**contabilidade** `241 = 25 + 216`, sem duplicatas no caminho normal. Também
+simula **falha total no primeiro lote**: o cursor não avança, o mesmo conjunto é
+retentado e chega completo. Por fim, perder o cursor depois de uma drenagem
+bem-sucedida reproduz 25 reenvios; as chaves `(bootId, seq)` identificam todas
+as duplicatas. Nesta seca não houve fila cheia nem compactação, então
+`descartados = 0`; a equação geral inclui esse termo e `pendentes`. A seca não
+substitui a execução real: não mede rede, tempo de drenagem nem p50/p95.
 
 ### Teste de host do `'u'`
 
-Função real extraída do firmware, com `Serial` fake:
+O caso abaixo é automatizado por `esp32/test/host/test_url.cpp`, que extrai a
+função real do firmware e usa um `Serial` fake:
 
 ```text
 ENVIO: URL de teste = invalida (dominio .invalid)
@@ -1419,6 +1437,33 @@ TODOS OS CENARIOS OK
 
 O domínio de teste também foi consultado no host: `url-invalida.invalid` não
 resolve (`Name or service not known`), como esperado.
+
+### Suíte automatizada completa
+
+`esp32/test/host/` reúne os testes de lógica executáveis sem placa. O comando
+`python3 test/host/run_tests.py --verbose` compila seis binários, roda as
+checagens estáticas e imprime cada verificação; a saída resumida é:
+
+```text
+[codec] TODOS OS CENARIOS OK
+[compactacao] TODOS OS CENARIOS OK
+[latencia] TODOS OS CENARIOS OK
+[drenagem_20min] TODOS OS CENARIOS OK
+[url] TODOS OS CENARIOS OK
+[backoff] TODOS OS CENARIOS OK
+== checagens estaticas ==
+OK   sem chamada delay( no firmware
+OK   secrets.h esta no .gitignore
+OK   secrets.h nao esta versionado
+OK   secrets.example.h esta versionado
+
+Resumo: 7/7 grupos OK
+```
+
+A cobertura por arquivo está em `esp32/test/host/README.md`; em resumo: codec
+v1, compactação/`'x'`/`'f'`, p50/p95, seca de 20 min com retry, `'u'`, backoff
+e as checagens estáticas de segredo/`delay()`. É evidência de **lógica**, não
+substitui o ensaio de rede nem mede DNS/TLS do ESP32.
 
 ### Build
 
@@ -1436,14 +1481,14 @@ Flash: [========  ]  77.0% (used 1008773 bytes from 1310720 bytes)
 | 2 | `seq` estritamente crescente por boot; buracos só onde houve descarte contabilizado | **Atendido no código.** `seq` é incrementado por registro; falha de `xQueueSend` e falha de persistência incrementam `descartados`; `seq` não é reutilizado. | `descartados` agrega fila + persistência + compactação; não há contador separado por buraco. `dizimados` não cria buraco de `seq` (só não envia). |
 | 3 | Toda linha termina em LF, nenhuma truncada, JSON válido | **Atendido no host; falta varredura final no device.** `persistir()` grava linha + LF; `recuperarLinhaParcial()` remove só a cauda; o teste 8A injeta/recupera 81 bytes; as amostras do INC 1 validaram os 3 tipos. | Linha inválida no **meio** do arquivo ainda pode travar a drenagem; o firmware só repara a cauda. Validar o dump com `jq`/Python após o ensaio. |
 | 4 | Codec round-trip idêntico campo a campo nos 3 tipos | **Atendido.** Testes de host do 6A/6B e `'t'` no device; codec v1 codifica/decodifica evento, snapshot e boot. | O ramo LoRa não é compilado no Wokwi; o round-trip foi provado no caminho `SIMULATION`/gateway. |
-| 5 | 20 min offline: `gerados = retidos + descartados`; retidos chegam; duplicatas identificáveis | **Parcial: política/contabilidade no host; execução de 20 min no device pendente.** Seca: 241 = 25 + 216, 0 duplicatas, âncora 240, boot/eventos e todos os mantidos enviados; 8A/7A cobrem perdas por compactação e prefixo 2xx. | A igualdade real precisa do termo `dizimados` e de `pendentes`: `gerados = retidos + pendentes + descartados + dizimados`. A cota do receptor continua bloqueando o ensaio de rede. |
-| 6 | 5xx/timeout preservam dados e mostram backoff com timestamp | **Atendido no host/testes anteriores; `'u'` agora cobre DNS real.** `'e'` 500/timeout retorna sem confirmar; `agendarNovaTentativa()` mantém o cursor e aplica backoff; cada tentativa loga `ENVIO: lote ... [ms]` e `proximoEnvioEm`. | O log da falha em si não repete `[ms]`; o intervalo é comprovado pela diferença entre os `[ms]` dos lotes. `'u'` no hardware ainda precisa ser observado. |
-| 7 | 4xx para o envio, preserva dados e mostra erro | **Atendido.** `'e'` 400; `agendarNovaTentativa()` mantém a fila, o cursor não avança e `ultimoErro` aparece no `'i'`; o teste de prefixo do 7A confirma que só o prefixo 2xx avança. | O 400 usa a pausa longa (5 min); para repetir rápido, troque `'e'` ou reinicie. |
-| 8 | Compactação nunca passa de 64 KB + uma linha; antigos saem, novos ficam; cursor reancora se preciso | **Atendido no host; observação no device pendente.** `persistir()` só anexa se `size + linha <= 64 KB`; se não couber após compactar, descarta o novo; `compactarFila()` mantém 3/4 (normal: 48 KB; `'f'`: 3/4 do tamanho atual); `'x'` pode deixar 64 KB + 81 B; o cursor reancora se a chave sumiu. | A compactação bloqueia o `loop()` durante a cópia; reancorar pode duplicar registros (nunca perder). `'x'` é gancho de teste, não operação normal. |
-| 9 | Linha parcial injetada some no próximo boot sem afetar o resto | **Atendido no host; reset no device pendente.** `'x'` grava 81 B sem LF; `recuperarLinhaParcial()` no boot/`persistir` remove só a cauda; o teste 8A confirma bytes e linhas completas preservadas. | Se o reset demorar, o próximo snapshot repara antes; para testar o caminho de boot, resetar em até 5 s. Arquivo só com a linha injetada é caso-limite. |
-| 10 | Latência criação→2xx (p50/p95) só para registros do boot corrente | **Implementado e testado no host; números reais pendentes.** 8B mede `agora_epoch − timestamp_epoch` no 2xx; só entra `horaSincronizada:true` e `bootId == g_bootId`; antigos vão para `foraBoot`; `'i'` imprime p50/p95, amostras e desconhecidas. | Resolução de 1 s; anel das últimas 128 confirmações; duplicatas contam de novo; o p50/p95 do ensaio de 20 min ainda não foi medido. |
-| 11 | Nenhum segredo em arquivo versionado | **Atendido.** `git check-ignore` confirma `esp32/.gitignore:6:secrets.h` para `esp32/src/secrets.h`; `git ls-files` lista só `esp32/src/secrets.example.h`; a URL de teste é `.invalid`, não um segredo. | `secrets.h` existe no disco local e pode estar em backup fora do Git; se vazar, rotacionar Wi-Fi/URL. |
-| 12 | Sem mudança na amostragem; sem `delay()` no `loop()` | **Atendido.** O diff do 8C não toca `tarefaAmostragem`, `lerSensor`, histerese, debounce, patamares, pinos ou períodos; a busca por `delay(` encontra só um comentário; o envio não usa espera bloqueante. | `delayMicroseconds()` em `lerSensor` e `vTaskDelayUntil()` da tarefa de amostragem são pré-existentes e não são `delay()`; o `loop()` segue em busy-wait. |
+| 5 | 20 min offline: `gerados = retidos + descartados`; retidos chegam; duplicatas identificáveis | **Parcial: política/contabilidade, retry e duplicatas no host; execução de 20 min no device pendente.** `test_drenagem_20min.cpp`: 241 = 25 + 216, 0 duplicatas, âncora 240, boot/eventos e todos os mantidos enviados; falha total no primeiro lote retenta o mesmo conjunto; perda de cursor gera 25 reenvios identificáveis por `(bootId, seq)`. 8A/7A cobrem perdas por compactação e prefixo 2xx. | A igualdade real precisa do termo `dizimados` e de `pendentes`: `gerados = retidos + pendentes + descartados + dizimados`. A cota do receptor continua bloqueando o ensaio de rede. |
+| 6 | 5xx/timeout preservam dados e mostram backoff com timestamp | **Atendido no host/testes anteriores; `'u'` agora cobre DNS real.** `'e'` 500/timeout retorna sem confirmar; `agendarNovaTentativa()` mantém o cursor e aplica backoff; `test_backoff.cpp` cobre 500/503, timeout, 429 e Retry-After; cada tentativa loga `ENVIO: lote ... [ms]` e `proximoEnvioEm`. | O log da falha em si não repete `[ms]`; o intervalo é comprovado pela diferença entre os `[ms]` dos lotes. `'u'` no hardware ainda precisa ser observado. |
+| 7 | 4xx para o envio, preserva dados e mostra erro | **Atendido.** `'e'` 400; `agendarNovaTentativa()` mantém a fila, o cursor não avança e `ultimoErro` aparece no `'i'`; `test_backoff.cpp` confirma 400 → 5 min e o teste de prefixo do 7A confirma que só o prefixo 2xx avança. | O 400 usa a pausa longa (5 min); para repetir rápido, troque `'e'` ou reinicie. |
+| 8 | Compactação nunca passa de 64 KB + uma linha; antigos saem, novos ficam; cursor reancora se preciso | **Atendido no host; observação no device pendente.** `persistir()` só anexa se `size + linha <= 64 KB`; se não couber após compactar, descarta o novo; `compactarFila()` mantém 3/4 (normal: 48 KB; `'f'`: 3/4 do tamanho atual); `test_compactacao.cpp` cobre compactação normal acima de 64 KB, forçada, cursor, 2 linhas, `'x'` e `'f'`; `'x'` pode deixar 64 KB + 81 B; o cursor reancora se a chave sumiu. | A compactação bloqueia o `loop()` durante a cópia; reancorar pode duplicar registros (nunca perder). `'x'` é gancho de teste, não operação normal. |
+| 9 | Linha parcial injetada some no próximo boot sem afetar o resto | **Atendido no host; reset no device pendente.** `'x'` grava 81 B sem LF; `recuperarLinhaParcial()` no boot/`persistir` remove só a cauda; `test_compactacao.cpp` confirma bytes e linhas completas preservadas e reparo no `'f'`. | Se o reset demorar, o próximo snapshot repara antes; para testar o caminho de boot, resetar em até 5 s. Arquivo só com a linha injetada é caso-limite. |
+| 10 | Latência criação→2xx (p50/p95) só para registros do boot corrente | **Implementado e testado no host; números reais pendentes.** 8B mede `agora_epoch − timestamp_epoch` no 2xx; só entra `horaSincronizada:true` e `bootId == g_bootId`; antigos vão para `foraBoot`; `test_latencia.cpp` valida p50/p95, anel de 128 e filtros; `'i'` imprime p50/p95, amostras e desconhecidas. | Resolução de 1 s; anel das últimas 128 confirmações; duplicatas contam de novo; o p50/p95 do ensaio de 20 min ainda não foi medido. |
+| 11 | Nenhum segredo em arquivo versionado | **Atendido e automatizado.** `run_tests.py` confirma via `git check-ignore` que `esp32/src/secrets.h` é ignorado e via `git ls-files` que só `esp32/src/secrets.example.h` é versionado; a URL de teste é `.invalid`, não um segredo. | `secrets.h` existe no disco local e pode estar em backup fora do Git; se vazar, rotacionar Wi-Fi/URL. |
+| 12 | Sem mudança na amostragem; sem `delay()` no `loop()` | **Atendido e automatizado.** `run_tests.py` varre o código (ignorando comentários) e não encontra chamada `delay(`; o diff do 8C não toca `tarefaAmostragem`, `lerSensor`, histerese, debounce, patamares, pinos ou períodos; o envio não usa espera bloqueante. | `delayMicroseconds()` em `lerSensor` e `vTaskDelayUntil()` da tarefa de amostragem são pré-existentes e não são `delay()`; o `loop()` segue em busy-wait. |
 
 ### Resultado do ensaio de 20 min (preencher no hardware)
 
@@ -1490,13 +1535,14 @@ política e a contabilidade.
   só de cauda. A compactação bloqueia o loop e pode reancorar (duplicatas).
 - **Ramo LoRa**: o caminho `#else` não foi compilado/testado no Wokwi; o
   gateway real precisa reportar o ack para o firmware.
-- **Sem commit**: o 8C está no working tree; nada foi commitado, mergeado ou
-  enviado.
+- **Sem commit nesta etapa**: o 8C já está commitado (`8dbaf76`); a suíte
+  `test/host/` está no working tree e não foi commitada, mergeada ou enviada.
 
 ### Próximo
 
-O 8C fecha o escopo de implementação. Falta apenas executar o protocolo de
-20 min com um receptor 2xx e colar os números na tabela acima; se você rodar,
-posso conferir a contabilidade e fechar o relatório final.
+O 8C fecha o escopo de implementação e a suíte de host cobre a lógica sem
+esperar 20 min. Falta apenas executar o protocolo de 20 min com um receptor 2xx
+e colar os números na tabela acima; se você rodar, posso conferir a
+contabilidade e fechar o relatório final.
 
-> Sem commit, merge ou push nesta etapa.
+> A suíte de testes está no working tree; sem commit, merge ou push nesta etapa.
