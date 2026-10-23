@@ -72,6 +72,10 @@ constexpr uint32_t WIFI_RETENTATIVA_MS = 30000;  // espera para tentar de novo
 constexpr uint32_t HTTP_TIMEOUT_MS     = 8000;   // conexão + resposta do POST
 constexpr uint32_t NTP_TIMEOUT_MS      = 10000;  // espera máxima pelo NTP
 
+// URL do comando 'u' (INC 8C): dominio .invalid (RFC 2606) nao resolve, para
+// exercitar DNS/transporte de verdade sem tocar na URL real de secrets.h.
+static const char* URL_INVALIDA = "https://url-invalida.invalid/";
+
 static const char* ARQ_FILA = "/fila.ndjson";
 static const char* ARQ_TMP  = "/fila.tmp";   // arquivo temporário da compactação
 
@@ -172,6 +176,7 @@ static EstadoWifi g_wifi = WIFI_OCIOSO;
 static uint32_t    g_wifiMarcMs = 0;
 
 static bool     g_offline = false;            // comando 'o': não tenta rede
+static bool     g_urlInvalida = false;         // comando 'u': usa URL que não resolve
 static bool     g_temPendente = false;         // há linha ainda não confirmada
 static uint32_t g_proximaTentativaMs = 0;      // pausa após falha de envio
 static uint32_t g_falhasConsecutivas = 0;      // alimenta o backoff exponencial
@@ -915,6 +920,7 @@ void imprimirDiagnostico() {
   Serial.printf("cursor: %s\n", cursor);
   Serial.printf("reancoragens: %lu\n", (unsigned long)g_reancoragens);
   Serial.printf("offline: %s\n", g_offline ? "sim" : "nao");
+  Serial.printf("urlTeste: %s\n", g_urlInvalida ? "invalida" : "normal");
   Serial.printf("tentativas: %lu\n", (unsigned long)g_envio.tentativas);
   Serial.printf("confirmados: %lu\n", (unsigned long)g_envio.confirmados);
   Serial.printf("falhas: %lu\n", (unsigned long)g_envio.falhas);
@@ -1237,7 +1243,8 @@ static int postarLinha(const char* linha) {
     return forcado;
   }
 
-  if (strlen(URL_RECEPTOR) == 0) {
+  const char* url = g_urlInvalida ? URL_INVALIDA : URL_RECEPTOR;
+  if (strlen(url) == 0) {
     static bool avisouUrl = false;
     if (!avisouUrl) { Serial.println("HTTP: URL_RECEPTOR vazia (preencha secrets.h)"); avisouUrl = true; }
     return -2;
@@ -1251,7 +1258,7 @@ static int postarLinha(const char* linha) {
   HTTPClient http;
   http.setConnectTimeout(HTTP_TIMEOUT_MS);
   http.setTimeout(HTTP_TIMEOUT_MS);
-  if (!http.begin(cliente, String(URL_RECEPTOR))) {
+  if (!http.begin(cliente, String(url))) {
     Serial.println("HTTP: falha ao iniciar a requisicao");
     return -3;
   }
@@ -1789,6 +1796,16 @@ static void alternarOffline() {
   Serial.printf("ENVIO: modo %s\n", g_offline ? "offline (nao envia)" : "online");
 }
 
+// Comando 'u': alterna para uma URL .invalid, exercitando DNS/transporte reais.
+// Também zera a espera para o teste não ficar preso no backoff anterior.
+static void alternarUrlInvalida() {
+  g_urlInvalida = !g_urlInvalida;
+  g_proximaTentativaMs = 0;
+  g_falhasConsecutivas = 0;
+  Serial.printf("ENVIO: URL de teste = %s\n",
+                g_urlInvalida ? "invalida (dominio .invalid)" : "normal");
+}
+
 // Comando 'e': cicla ok -> 500 -> 400 -> timeout, para exercitar o backoff.
 static void alternarRespostaForcada() {
   switch (g_resposta) {
@@ -1876,6 +1893,7 @@ void loop() {
     else if (c == 'L') limparFila();
     else if (c == 'i') imprimirDiagnostico();
     else if (c == 'o') alternarOffline();
+    else if (c == 'u') alternarUrlInvalida();
     else if (c == 'e') alternarRespostaForcada();
     else if (c == 't') rodarTesteCodec();
     else if (c == 'x') injetarLinhaTruncada();

@@ -1133,8 +1133,8 @@ copiadas de `main_alt.cpp` para um `.inc` em `/tmp/opencode`, com `File`,
 ### Próximo
 
 **8B**: implementado na seção seguinte (latência criação→2xx, p50/p95 no
-`'i'`). **8C**: executar o protocolo de 20 min offline e fechar a tabela dos 12
-critérios finais.
+`'i'`). **8C**: implementado mais abaixo; falta executar o protocolo de 20 min
+offline e fechar a tabela dos 12 critérios finais.
 
 > Sem commit, merge ou push nesta etapa.
 
@@ -1247,8 +1247,9 @@ e p95=194.
   confirmação no Wokwi.
 - Build limpo: **passou**.
 
-O p50/p95 real do protocolo de 20 min fica para o **8C**, que também precisa de
-um receptor com 2xx disponível (a cota do Webhook.site continua esgotada).
+O p50/p95 real do protocolo de 20 min fica para o ensaio descrito no **8C**,
+que também precisa de um receptor com 2xx disponível (a cota do Webhook.site
+continua esgotada).
 
 ### Riscos e limitações do 8B
 
@@ -1276,10 +1277,226 @@ um receptor com 2xx disponível (a cota do Webhook.site continua esgotada).
 
 ### Próximo
 
-**8C**: executar o protocolo de 20 min offline (com `'L'` antes, `'o'`
-offline, depois `'o'` online), registrar tempo de drenagem, p50/p95, duplicatas
-por `(bootId, seq)` e preencher a tabela dos 12 critérios finais. O `'u'` (URL
-inválida) da seção 6 da especificação continua pendente; pode entrar no 8C se
-você quiser exercitar DNS/TLS reais.
+**8C**: implementado na seção seguinte, incluindo o `'u'` (URL inválida), o
+protocolo de 20 min e a tabela dos 12 critérios finais.
+
+> Sem commit, merge ou push nesta etapa.
+
+---
+
+## INC 8C — `'u'`, protocolo de 20 min e fechamento dos 12 critérios
+
+### Objetivo
+
+Fechar a camada de envio: adicionar o comando **`'u'`** (URL inválida), deixar
+um protocolo reproduzível de **20 min offline**, registrar a evidência possível
+no host e preencher a tabela dos **12 critérios finais**, separando o que foi
+provado do que ainda depende de execução no hardware/Wokwi.
+
+### Mudanças em `esp32/src/main_alt.cpp` (+20 / −2, sobre o 8B commitado)
+
+| Item | Detalhe |
+|---|---|
+| `URL_INVALIDA` | `https://url-invalida.invalid/` — domínio `.invalid` (RFC 2606), que não resolve. Não substitui `secrets.h`. |
+| `g_urlInvalida` | Estado do comando `'u'`; começa `false`. |
+| `postarLinha()` | Escolhe `g_urlInvalida ? URL_INVALIDA : URL_RECEPTOR`; o resto do caminho HTTP/TLS não mudou. |
+| `alternarUrlInvalida()` | Alterna a URL e zera `g_proximaTentativaMs`/`g_falhasConsecutivas`, para o teste não ficar preso no backoff anterior. |
+| `'u'` no `loop()` | Chama `alternarUrlInvalida()`. |
+| `'i'` | Nova linha `urlTeste: normal|invalida`. |
+
+### O que NÃO mudou
+
+Amostragem, histerese, debounce, patamares, pinos, períodos, formato NDJSON,
+cursor NVS, ordem do 7B, codec v1, `'x'`/`'f'`, `'d'`, `'L'`, `'o'`, `'e'`,
+`'t'`, `SIMULATION` e o ramo LoRa.
+
+### Comando `'u'` — como testar
+
+1. Deixe pelo menos uma linha pendente, o Wi-Fi conectado e confirme que
+   `'e'` está em `ok` (a resposta forçada tem precedência sobre a URL).
+2. Pressione `'u'`; deve aparecer:
+   `ENVIO: URL de teste = invalida (dominio .invalid)`.
+3. A próxima tentativa deve falhar no DNS/transporte, sem avançar o cursor:
+   `HTTP: falha -1` (ou código negativo equivalente) e
+   `ENVIO: ... proxima em ... s`.
+4. Pressione `'i'`: `urlTeste: invalida`, `tentativas`/`falhas` incrementados,
+   `cursor` inalterado, `pendentes` preservados.
+5. Pressione `'u'` de novo: `ENVIO: URL de teste = normal`; o backoff é zerado
+   e a próxima tentativa usa a URL real.
+6. Repita com `'e'` em `500`, `400` e `timeout` para cobrir os caminhos que o
+   DNS inválido não exercita.
+
+O comando usa `.invalid` de propósito: ele testa **DNS/transporte reais** sem
+tocar na URL de produção e sem gravar segredo em arquivo versionado. O caminho
+TLS continua com `setInsecure()` no Wokwi, como registrado no INC 2.
+
+### Protocolo de 20 min offline
+
+Pré-requisitos: receptor com 2xx disponível; monitor serial capturado em
+arquivo; acesso à exportação de requisições do receptor.
+
+1. **Reset limpo:** pressione `'L'`. Isso zera a fila, `descartados`,
+   `perdidosNaoConfirmados` e a medição de latência.
+2. Espere a linha de boot e o relógio válido (`HORA: fonte=ntp` ou `http`).
+   No `'i'`, confirme `urlTeste: normal` e `offline: nao`; se necessário,
+   pressione `'u'`/`'o'` para voltar ao modo normal. Anote `t0` e o primeiro
+   `'i'`.
+3. Pressione `'o'` para ficar **offline**. O arquivo continua crescendo a cada
+   snapshot de 5 s e a cada evento.
+4. Aguarde **20 min** (240 snapshots previstos, além dos eventos). Não use
+   `'x'`, `'f'` nem `'L'` durante a janela.
+5. Ao final, pressione `'i'` e registre: `bytes`, `linhas`, `pendentes`,
+   `descartados`, `perdidosNaoConfirmados`, `dizimados`, `latencia`.
+6. Pressione `'o'` para voltar online e cronometre a drenagem. Considere o fim
+   quando `pendentes: 0` e não houver novo `ENVIO: lote`.
+7. Exporte as requisições do receptor e agrupe por `(bootId, seq)`:
+   - **retidos** = chaves únicas recebidas;
+   - **duplicatas** = requisições com a mesma chave;
+   - **faltantes** = chaves esperadas que não chegaram.
+8. Confira a contabilidade:
+
+```text
+gerados (seq_max + 1)
+  = retidos únicos
+  + pendentes no fim
+  + descartados (fila cheia, falha de persistência, compactação)
+  + dizimados (snapshots ignorados pela política do 7B)
+```
+
+`perdidosNaoConfirmados` é **subconjunto** de `descartados` (só o que foi
+removido pela compactação depois do cursor e não estava no conjunto de
+resolvidos); não some esse valor de novo. `dizimados` também não é perda: é a
+política de backfill que manda 1 snapshot a cada 10.
+
+### Evidência de host — seca de 20 min
+
+Para validar a política sem esperar 20 min reais, foi montado um arquivo com
+**241 registros**: 1 boot (`seq 0`), 237 snapshots e 3 eventos (`seq 10/50/100`).
+As funções de seleção do 7B foram **extraídas do firmware** e executadas com
+um `File`/`LittleFS` fake; todos os lotes foram confirmados com 2xx.
+
+```text
+rodadas=6 enviados=25 unicos=25 duplicatas=0 dizimados=216
+cursor=AAAA0001/240 resolvidos=0 reancoragens=0
+
+OK   primeiro enviado e a ancora snapshot 240
+OK   25 registros efetivamente enviados
+OK   25 chaves unicas, sem duplicata
+OK   216 snapshots dizimados pela politica
+OK   cursor final em 240
+OK   conjunto de resolvidos vazio no fim
+OK   sem reancoragem (cursor nunca sumiu)
+OK   boot 0 enviado no lote 1
+OK   eventos 10/50/100 enviados
+OK   todos os snapshots mantidos (20..240, exceto 50/100) foram enviados
+
+contabilidade: 241 gerados = 25 enviados + 216 dizimados
+TODOS OS CENARIOS OK
+```
+
+Isso cobre a **ordem** (âncora 240 primeiro; boot e eventos do boot corrente
+depois; backfill dizimado por último), a **cobertura** dos mantidos e a
+**contabilidade** `241 = 25 + 216`, sem duplicatas e sem reancoragem. Nesta seca
+não houve fila cheia nem compactação, então `descartados = 0`; a equação geral
+inclui esse termo e `pendentes`. A seca não substitui a execução real: não mede
+rede, tempo de drenagem nem duplicatas por reboot.
+
+### Teste de host do `'u'`
+
+Função real extraída do firmware, com `Serial` fake:
+
+```text
+ENVIO: URL de teste = invalida (dominio .invalid)
+OK   primeiro 'u' ativa URL invalida
+OK   primeiro 'u' zera a espera
+OK   primeiro 'u' zera as falhas
+ENVIO: URL de teste = normal
+OK   segundo 'u' volta para a URL normal
+OK   segundo 'u' zera a espera
+OK   segundo 'u' zera as falhas
+TODOS OS CENARIOS OK
+```
+
+O domínio de teste também foi consultado no host: `url-invalida.invalid` não
+resolve (`Name or service not known`), como esperado.
+
+### Build
+
+```text
+RAM:   [==        ]  15.5% (used 50740 bytes from 327680 bytes)
+Flash: [========  ]  77.0% (used 1008773 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+### Tabela dos 12 critérios finais
+
+| # | Critério | Evidência / status | Limitação ou observação |
+|---|---|---|---|
+| 1 | Exatamente 1 boot, `seq 0`, lat/lon placeholder, `origem=simulacao`, primeira linha do arquivo | **Atendido com a decisão do INC 1.** A tarefa de amostragem gera um boot no início; `seq=0`; na simulação lat/lon só vão no boot; `origem` é `simulacao`. | Após reboot com fila existente, o boot novo é a primeira linha **gerada neste boot**, não a primeira linha física. Em arquivo novo (após `'L'`), é a primeira física. |
+| 2 | `seq` estritamente crescente por boot; buracos só onde houve descarte contabilizado | **Atendido no código.** `seq` é incrementado por registro; falha de `xQueueSend` e falha de persistência incrementam `descartados`; `seq` não é reutilizado. | `descartados` agrega fila + persistência + compactação; não há contador separado por buraco. `dizimados` não cria buraco de `seq` (só não envia). |
+| 3 | Toda linha termina em LF, nenhuma truncada, JSON válido | **Atendido no host; falta varredura final no device.** `persistir()` grava linha + LF; `recuperarLinhaParcial()` remove só a cauda; o teste 8A injeta/recupera 81 bytes; as amostras do INC 1 validaram os 3 tipos. | Linha inválida no **meio** do arquivo ainda pode travar a drenagem; o firmware só repara a cauda. Validar o dump com `jq`/Python após o ensaio. |
+| 4 | Codec round-trip idêntico campo a campo nos 3 tipos | **Atendido.** Testes de host do 6A/6B e `'t'` no device; codec v1 codifica/decodifica evento, snapshot e boot. | O ramo LoRa não é compilado no Wokwi; o round-trip foi provado no caminho `SIMULATION`/gateway. |
+| 5 | 20 min offline: `gerados = retidos + descartados`; retidos chegam; duplicatas identificáveis | **Parcial: política/contabilidade no host; execução de 20 min no device pendente.** Seca: 241 = 25 + 216, 0 duplicatas, âncora 240, boot/eventos e todos os mantidos enviados; 8A/7A cobrem perdas por compactação e prefixo 2xx. | A igualdade real precisa do termo `dizimados` e de `pendentes`: `gerados = retidos + pendentes + descartados + dizimados`. A cota do receptor continua bloqueando o ensaio de rede. |
+| 6 | 5xx/timeout preservam dados e mostram backoff com timestamp | **Atendido no host/testes anteriores; `'u'` agora cobre DNS real.** `'e'` 500/timeout retorna sem confirmar; `agendarNovaTentativa()` mantém o cursor e aplica backoff; cada tentativa loga `ENVIO: lote ... [ms]` e `proximoEnvioEm`. | O log da falha em si não repete `[ms]`; o intervalo é comprovado pela diferença entre os `[ms]` dos lotes. `'u'` no hardware ainda precisa ser observado. |
+| 7 | 4xx para o envio, preserva dados e mostra erro | **Atendido.** `'e'` 400; `agendarNovaTentativa()` mantém a fila, o cursor não avança e `ultimoErro` aparece no `'i'`; o teste de prefixo do 7A confirma que só o prefixo 2xx avança. | O 400 usa a pausa longa (5 min); para repetir rápido, troque `'e'` ou reinicie. |
+| 8 | Compactação nunca passa de 64 KB + uma linha; antigos saem, novos ficam; cursor reancora se preciso | **Atendido no host; observação no device pendente.** `persistir()` só anexa se `size + linha <= 64 KB`; se não couber após compactar, descarta o novo; `compactarFila()` mantém 3/4 (normal: 48 KB; `'f'`: 3/4 do tamanho atual); `'x'` pode deixar 64 KB + 81 B; o cursor reancora se a chave sumiu. | A compactação bloqueia o `loop()` durante a cópia; reancorar pode duplicar registros (nunca perder). `'x'` é gancho de teste, não operação normal. |
+| 9 | Linha parcial injetada some no próximo boot sem afetar o resto | **Atendido no host; reset no device pendente.** `'x'` grava 81 B sem LF; `recuperarLinhaParcial()` no boot/`persistir` remove só a cauda; o teste 8A confirma bytes e linhas completas preservadas. | Se o reset demorar, o próximo snapshot repara antes; para testar o caminho de boot, resetar em até 5 s. Arquivo só com a linha injetada é caso-limite. |
+| 10 | Latência criação→2xx (p50/p95) só para registros do boot corrente | **Implementado e testado no host; números reais pendentes.** 8B mede `agora_epoch − timestamp_epoch` no 2xx; só entra `horaSincronizada:true` e `bootId == g_bootId`; antigos vão para `foraBoot`; `'i'` imprime p50/p95, amostras e desconhecidas. | Resolução de 1 s; anel das últimas 128 confirmações; duplicatas contam de novo; o p50/p95 do ensaio de 20 min ainda não foi medido. |
+| 11 | Nenhum segredo em arquivo versionado | **Atendido.** `git check-ignore` confirma `esp32/.gitignore:6:secrets.h` para `esp32/src/secrets.h`; `git ls-files` lista só `esp32/src/secrets.example.h`; a URL de teste é `.invalid`, não um segredo. | `secrets.h` existe no disco local e pode estar em backup fora do Git; se vazar, rotacionar Wi-Fi/URL. |
+| 12 | Sem mudança na amostragem; sem `delay()` no `loop()` | **Atendido.** O diff do 8C não toca `tarefaAmostragem`, `lerSensor`, histerese, debounce, patamares, pinos ou períodos; a busca por `delay(` encontra só um comentário; o envio não usa espera bloqueante. | `delayMicroseconds()` em `lerSensor` e `vTaskDelayUntil()` da tarefa de amostragem são pré-existentes e não são `delay()`; o `loop()` segue em busy-wait. |
+
+### Resultado do ensaio de 20 min (preencher no hardware)
+
+A parte de rede **não foi executada neste ambiente**: a cota do Webhook.site
+continua esgotada e não há token do Wokwi CLI disponível. A tabela abaixo é o
+local exato para colar os números do ensaio; a seca de host acima já valida a
+política e a contabilidade.
+
+| Métrica | Valor medido |
+|---|---|
+| Início/fim do offline | |
+| `seq_max` e `gerados = seq_max + 1` | |
+| `retidos` únicos no receptor | |
+| Duplicatas por `(bootId, seq)` | |
+| `pendentes` no fim da drenagem | |
+| `descartados` (fila + persistência + compactação) | |
+| `perdidosNaoConfirmados` (subconjunto) | |
+| `dizimados` (política) | |
+| `reancoragens` | |
+| Bytes antes/depois da drenagem | |
+| Tempo de drenagem (primeiro ao último 2xx) | |
+| `p50` / `p95` de latência | |
+| `desconhecidas` / `foraBoot` | |
+| Conferência da equação | `gerados = retidos + pendentes + descartados + dizimados` |
+
+### Riscos e limitações finais
+
+- **Ensaio de 20 min não executado**: sem receptor 2xx, os critérios 5 e 10
+  ficam com evidência de host, não de rede. O procedimento acima é o que falta.
+- **`'u'`**: o `.invalid` falha no DNS; não garante exercitar timeout/TLS em
+  todos os ambientes. Para timeout, use `'e'`; para TLS real, seria preciso um
+  host com certificado válido e `setCACert()` no hardware.
+- **Boot após reboot**: a decisão do INC 1 continua valendo; o critério 1
+  literalmente ("primeira linha do arquivo") só é verdade em arquivo novo.
+- **Contabilidade**: `dizimados` precisa entrar como terceiro termo; sem ele a
+  igualdade do critério 5 não fecha. `perdidosNaoConfirmados` é subconjunto de
+  `descartados`.
+- **Duplicatas**: o conjunto de resolvidos é RAM; após reboot/falha, o cursor
+  pode reenviar. Isso é aceitável (duplicata identificável), mas o p50/p95 pode
+  ser puxado para cima.
+- **Latência**: 1 s de resolução, anel de 128, inclui backlog e espera do lote;
+  não é tempo de rede.
+- **Arquivo**: linha inválida no meio ainda trava a drenagem; a recuperação é
+  só de cauda. A compactação bloqueia o loop e pode reancorar (duplicatas).
+- **Ramo LoRa**: o caminho `#else` não foi compilado/testado no Wokwi; o
+  gateway real precisa reportar o ack para o firmware.
+- **Sem commit**: o 8C está no working tree; nada foi commitado, mergeado ou
+  enviado.
+
+### Próximo
+
+O 8C fecha o escopo de implementação. Falta apenas executar o protocolo de
+20 min com um receptor 2xx e colar os números na tabela acima; se você rodar,
+posso conferir a contabilidade e fechar o relatório final.
 
 > Sem commit, merge ou push nesta etapa.
