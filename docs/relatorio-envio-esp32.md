@@ -225,9 +225,10 @@ texto invalido -> rejeitou (ok)
 - O POST passou a enviar a linha já gravada (`postarLinha`), sem remontar o
   JSON. Isso preserva exatamente o timestamp e o `horaSincronizada` da criação
   (o `montarPayload` do INC 2 foi removido).
-- Cursor não encontrado no arquivo (compactação ou `'L'`): reancora no início,
+- Cursor não encontrado no arquivo (compactação): reancora no início,
   incrementa `reancoragens` e loga `ENVIO: cursor nao encontrado; reancorando
-  no inicio`. Pode duplicar, mas não perde.
+  no inicio`. Pode duplicar, mas não perde. No 7B, `'L'` preserva o cursor na
+  NVS; como a chave sumiu do arquivo, o próximo envio reancora.
 - `'i'` passou a mostrar `cursor`, `pendentes` (recontados a partir do cursor),
   `reancoragens` e `offline`.
 - Falha de envio impõe uma pausa fixa de 5 s (`PAUSA_FALHA_MS`), provisória até
@@ -272,8 +273,10 @@ TODOS OS CASOS OK
 3. Reset (botão EN, sem parar a simulação) → `BOOT: ... cursor=...` e
    `ENVIO: urlConfigurada=sim cursor=...`. O que já tinha 2xx não é reenviado;
    só as linhas novas (e as que estavam pendentes) saem.
-4. Para exercitar a reancoragem: `'L'` apaga o arquivo mas preserva o cursor;
-   no próximo envio aparece `reancorando no inicio` e `reancoragens` sobe.
+4. Para exercitar a reancoragem: no INC 4, `'L'` apagava o arquivo mas
+   preservava o cursor. **A partir do 7B**, `'L'` zera conjunto e âncora; o
+   cursor na NVS é preservado (como no INC 4), e o próximo envio reancora
+   porque a chave sumiu.
 
 Parar e reiniciar a simulação pode reinicializar a flash (LittleFS e NVS);
 para o teste de reset, usar o botão de reset dentro da sessão.
@@ -287,8 +290,9 @@ para o teste de reset, usar o botão de reset dentro da sessão.
 - Se a compactação remover a linha do cursor e houver linhas não confirmadas
   anteriores a ela, a reancoragem reenvia (duplicata) — não há perda.
   `perdidosNãoConfirmados` fica para o INC 8, junto da contabilidade de perdas.
-- `'L'` não zera o cursor de propósito: a reancoragem cobre o caso sem apagar
-  a NVS.
+- No INC 4, `'L'` não zerava o cursor de propósito. O 7B mantém isso: `'L'`
+  preserva o cursor na NVS, mas zera conjunto e âncora; o próximo envio
+  reancora porque a chave sumiu.
 - O tamanho líquido ficou em +157 (levemente acima do teto de ~150) porque a
   varredura, a NVS e o modo offline formam uma unidade testável; dividir
   deixaria o cursor sem uso em uma das metades.
@@ -716,7 +720,7 @@ origem (evento, snapshot, evento), incluindo os `seq` 5, 6 e 7.
 
 Lote de até 6, sem misturar boot/origem, confirmação do maior prefixo 2xx e
 cursor avançando só até o último confirmado: **passou no host**. Falta observar
-os lotes no Wokwi. A **ordem** do INC 7 ainda não está implementada (7B).
+os lotes no Wokwi. A **ordem** do INC 7 foi implementada no 7B (abaixo).
 
 ### Riscos e lacunas
 
@@ -725,8 +729,8 @@ os lotes no Wokwi. A **ordem** do INC 7 ainda não está implementada (7B).
   de envio em outra task resolveria. O lote de 1 do INC 5 já tinha esse risco,
   menor.
 - **Sem jitter** no backoff (pendente desde o INC 5).
-- **Sem ordem/dizimação**: o 7A envia em ordem de arquivo. O snapshot mais
-  recente, o boot e a dizimação entram no 7B.
+- **Sem ordem/dizimação no 7A**: o 7A envia em ordem de arquivo; o 7B (abaixo)
+  implementa a ordem e a dizimação.
 - **Só o mesmo boot**: um quadro tem `bootId` único; ao trocar de boot, o lote
   para antes. Isso é correto para o formato v1.
 - **Gap > 255** ou `seq` fora de ordem/duplicado: o lote para antes; a próxima
@@ -739,3 +743,398 @@ os lotes no Wokwi. A **ordem** do INC 7 ainda não está implementada (7B).
 - **Prefixo só é observável na simulação**: no ramo LoRa quem sabe quantos
   registros o gateway postou é o gateway; o firmware precisaria receber esse
   número no ack.
+
+---
+
+## INC 7B — Ordem de drenagem, âncora e dizimação
+
+O 7B fecha o INC 7. Ele mantém o transporte em lote e o prefixo 2xx do 7A e
+muda **quais** registros entram em cada lote e **como** o cursor representa
+confirmações fora de ordem.
+
+### Mudanças em `esp32/src/main_alt.cpp` (+328 / −41)
+
+> O diff ficou acima da meta de ~150 linhas. A âncora, o conjunto de chaves e o
+> watermark são acoplados; uma divisão em 7B1/7B2 exigiria duas versões do
+> cursor. Se preferir, ainda posso separar em commits/entregas menores.
+
+| Item | Detalhe |
+|---|---|
+| Ordem | (1) snapshot mais recente ainda não confirmado — **âncora**, sozinho; (2) boot do boot corrente + eventos dele; (3) eventos FIFO de qualquer boot; (4) backfill a partir do cursor: boot antigo (contexto/coordenadas) + snapshots mantidos do mesmo boot. |
+| Âncora | `g_ancoraEnviada` garante **uma** âncora por drenagem. É enviada sozinha porque os registros do quadro precisam de `seq` crescente e a âncora é o mais novo. É resetada no boot, ao voltar de offline e quando a fila esvazia. |
+| Eventos furam a fila | `buscarEventos` é consultado antes do backfill em toda rodada; um evento novo não espera os snapshots antigos. |
+| Dizimação | Snapshots de backfill com `seq % 10 == 0` são mantidos; os demais são descartados pela política e contados em `dizimados`. O cursor pode passar por eles. Não é perda: é descarte deliberado, separado de `descartados` (compactação do arquivo). |
+| Cursor | Continua sendo `(bootId, seq)` do último confirmado **em ordem de arquivo**, gravado na NVS uma vez por avanço. Confirmações fora de ordem ficam num conjunto de 32 chaves em RAM. `avancarCursorResolvido` anda pelo prefixo já resolvido e pelos snapshots dizimados; para no primeiro registro que ainda precisa de 2xx. |
+| Conjunto em RAM | `g_resolvidos[32]` (bootId + seq), com remoção ao ser alcançado. Se encher, a chave mais antiga sai: o registro pode ser reenviado (duplicata), nunca perdido. Reboot perde o conjunto: idem, duplicata. |
+| Backfill | `buscarBackfill` inclui o boot antigo e os snapshots mantidos; não mistura dois boots no mesmo quadro. Se o gap entre o boot e o primeiro snapshot passar de 255, o boot vai sozinho e o snapshot no lote seguinte. |
+| Reancoragem | Se a chave do cursor sumiu (compactação ou `'L'`), `abrirAposCursor` invalida o cursor (`g_ackValido=false`), limpa o conjunto e a âncora e relê desde o início. `selecionarLote` valida o cursor antes de escolher a ordem, para não dizimar a âncora nova no meio do processo. |
+| `'L'` | Continua apagando o arquivo e preservando o cursor na NVS (como no INC 4); agora também zera o conjunto e a âncora. O próximo envio não acha a chave e reancora no início; a linha nova ancora. |
+| Flags/coords | O boot entra no backfill para levar as coordenadas; a flag de coordenadas continua global ao quadro e só o JSON do boot as mostra. |
+| Log | Além de `ENVIO: lote K/N 2xx`, cada lote imprime `ENVIO: lote N [ms]: tipo/seq ...`, na ordem em que os POSTs serão feitos. |
+| `'i'` | Novos campos: `dizimados`, `resolvidosFora` (tamanho do conjunto) e `ancora` (`enviada`/`pendente`). |
+| Removidos | `coletarLote`, `buscarLote` e `confirmarCursor` (substituídos por `selecionarLote`, pelo conjunto de resolvidos e por `avancarCursorResolvido`). |
+
+### O que NÃO mudou
+
+Amostragem, histerese, debounce, períodos, limiares, pinos, persistência,
+compactação, formato do arquivo, `'d'`, `'o'`, `'e'`, `'t'`, offline,
+backoff, 429/Retry-After, 4xx em 5 min, codec v1 e o contrato de telemetria.
+Não há `delay()` no caminho de envio nem `String` no payload.
+
+O `'L'` continua apagando o arquivo e preservando o cursor na NVS (como no
+INC 4); agora também zera o conjunto e a âncora. O próximo envio reancora
+porque a chave sumiu.
+
+### Evidência de host
+
+As funções reais de seleção/cursor foram extraídas de `main_alt.cpp` e
+compiladas com `File` simulado (`/tmp/opencode/teste_drenagem.cpp` +
+`funcs_drenagem.inc`). Cada cenário simula 2xx de todos os registros do lote e
+chama `avancarCursorResolvido`, como o firmware faz:
+
+```
+--- mesmo boot, cursor no boot ---
+lote 1: snapshot/61   ancora=sim
+lote 2: evento/10 evento/20   ancora=nao
+lote 3: snapshot/30 snapshot/40 snapshot/50 snapshot/60   ancora=nao
+(fim)
+cursor=AAAA0001/61 dizimados=54 resolvidos=0 nvs=3
+
+--- mesmo boot, sem cursor ---
+lote 1: snapshot/61   ancora=sim
+lote 2: boot/0 evento/10 evento/20   ancora=nao
+lote 3: snapshot/30 snapshot/40 snapshot/50 snapshot/60   ancora=nao
+(fim)
+cursor=AAAA0001/61 dizimados=54 resolvidos=0 nvs=2
+
+--- boot antigo + boot corrente, sem cursor ---
+lote 1: snapshot/3   ancora=sim
+lote 2: boot/0 evento/4   ancora=nao
+lote 3: evento/6   ancora=nao
+lote 4: boot/0   ancora=nao
+(fim)
+cursor=BBBB0002/4 dizimados=7 resolvidos=0 nvs=1
+
+--- snapshots 1..30, dizimacao 1/10 ---
+lote 1: snapshot/30   ancora=sim
+lote 2: snapshot/10 snapshot/20   ancora=nao
+(fim)
+cursor=AAAA0001/30 dizimados=27 resolvidos=0 nvs=2
+
+--- backfill de boot antigo com snapshots mantidos ---
+lote 1: snapshot/3   ancora=sim
+lote 2: boot/0 evento/4   ancora=nao
+lote 3: evento/25   ancora=nao
+lote 4: boot/0 snapshot/10 snapshot/20 snapshot/30   ancora=nao
+(fim)
+cursor=BBBB0002/4 dizimados=2 resolvidos=0 nvs=1
+```
+
+Reancoragem (cursor antigo sumiu enquanto `g_ancoraEnviada=true`):
+
+```
+ENVIO: cursor nao encontrado; reancorando no inicio
+--- reancora com ancora antiga ---
+lote n=1 seq=15 ancora=sim cursorValido=nao -> OK
+```
+
+Sem invalidar o cursor, o snapshot 15 (não múltiplo de 10) seria dizimado antes
+de ser escolhido como âncora. O teste cobre exatamente esse caso.
+
+O caso de prefixo parcial confirma só o primeiro registro de um lote de boot +
+três eventos; a rodada seguinte começa no segundo evento, sem pular o que
+falhou:
+
+```
+--- prefixo parcial ---
+lote inicial n=4
+apos confirmar so o primeiro: proximo n=3 (seq=1)
+prefixo parcial OK
+TODOS OS CENARIOS OK
+```
+
+Observações da evidência:
+
+- **Âncora**: sempre o primeiro lote, com `n=1`, e `ancora=sim`.
+- **Ordem**: eventos antes dos snapshots; o boot corrente antes dos eventos.
+- **Dizimação**: no cenário 1, 54 snapshots foram descartados (1..9, 11..19,
+  21..29, 31..39, 41..49, 51..59); 30/40/50/60 foram mantidos.
+- **Watermark**: o cursor terminou em 61 mesmo com a âncora confirmada antes;
+  `resolvidosFora=0` no fim, ou seja, o conjunto foi drenado.
+- **Reancoragem**: com cursor antigo + `g_ancoraEnviada=true`, a âncora nova
+  (15) foi escolhida e não dizimada; o cursor inválido foi esquecido
+  (`cursorValido=nao`).
+- **NVS**: no máximo uma gravação por avanço do cursor, não uma por registro.
+- **Boot antigo**: no cenário 5, o boot antigo foi junto com seus snapshots
+  mantidos (10/20/30), mostrando que o backfill não para no boot.
+- **Sem travamento**: um boot antigo nunca deixa a fila presa; ele é incluído no
+  backfill e, quando não cabe com o próximo snapshot, vai sozinho.
+
+Build final:
+
+```
+RAM:   [==        ]  15.3% (used 50212 bytes from 327680 bytes)
+Flash: [========  ]  76.8% (used 1006665 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+### Como testar no hardware/Wokwi
+
+1. `'L'` para limpar a fila e `'o'` para ficar offline. Deixe passar **5 min**
+   (vários snapshots; provoque pelo menos um evento, se possível). Anote o que
+   `'d'` mostra.
+2. `'o'` para voltar online. A primeira linha deve ser a âncora:
+   `ENVIO: lote 1 [<ms>]: snapshot/<seq mais novo>` seguida de
+   `ENVIO: lote 1/1 2xx`.
+3. Se o boot corrente ainda não foi confirmado, o próximo lote deve começar por
+   `boot/0`; depois os eventos, depois os snapshots mantidos. A ordem aparece
+   no log `ENVIO: lote N [ms]: ...`.
+4. Deixe drenar até `pendentes=0`. Meça o tempo do primeiro `[ms]` ao último
+   `[ms]`; com lotes de até 6 e POSTs sequenciais, o tempo é aproximadamente
+   `n_lotes × latência_do_POST`.
+5. `'i'`: `dizimados` deve ser aproximadamente o número de snapshots
+   não múltiplos de 10 que ficaram para trás; `resolvidosFora` deve voltar a 0;
+   `ancora` volta a `pendente` quando a fila esvazia.
+6. **Duplicatas**: no receptor, agrupe por `(bootId, seq)`. O normal é cada
+   chave aparecer uma vez; após reboot no meio de uma drenagem, ou se um lote
+   falhou e foi repetido, a mesma chave pode aparecer de novo. O critério é
+   **nenhuma chave perdida** e eventos nunca descartados; duplicata é aceita.
+7. **Falha no primeiro POST**: `'e'` uma vez (500). O lote deve mostrar
+   `ENVIO: lote 0/N 2xx (http 500)`, o cursor não avança e a âncora continua
+   pendente. O próximo ciclo reancora.
+8. **Prefixo parcial**: difícil de forçar no Wokwi; o teste de host cobre
+   2×2xx + 429. No hardware, o 429/erro no meio depende do receptor.
+9. **Offline → online**: o `g_ancoraEnviada` é resetado ao voltar online; a
+   primeira drenagem ancora de novo, mesmo que a fila já tivesse sido drenada
+   antes.
+10. **`'L'` no meio**: com fila pendente, `'L'`; `'d'` deve ficar vazio e o
+    próximo envio deve logar `reancorando no inicio` (o cursor antigo não
+    existe mais no arquivo). Grave uma nova amostra e volte online: ela deve
+    ser a âncora (`n=1`), sem ser dizimada pelo estado anterior.
+
+### Critério de aceite do INC 7 (7A + 7B)
+
+- Lote de até 6, mesmo boot, `seq` crescente e gap ≤ 255.
+- Prefixo 2xx confirmado; o cursor só avança por 2xx ou por snapshot dizimado
+  pela política.
+- Ordem observável no log: âncora → boot corrente → eventos FIFO → backfill.
+- Um evento novo não espera o backfill.
+- Nenhum evento é descartado; snapshots fora da política são contados em
+  `dizimados`.
+- Duplicatas por `(bootId, seq)` são possíveis após reboot/falha, mas nenhuma
+  chave é perdida.
+- `'L'` ou cursor perdido: conjunto e âncora limpos; o próximo envio reancora
+  e a linha nova ancora, sem dizimar um snapshot novo antes da âncora.
+- Build limpo e testes de host passando.
+
+O host passou; falta a observação no hardware/Wokwi.
+
+### Riscos e lacunas do 7B
+
+- **6 POSTs síncronos** continuam bloqueando o loop (até ~48 s com timeout de
+  8 s). O `delay()` não existe, mas a latência HTTP é real; uma task de envio
+  resolveria.
+- **Âncora uma vez por drenagem**: snapshots novos que chegam durante uma
+  drenagem longa não são âncora; entram no backfill e podem ser dizimados. Se a
+  âncora falhar, ela é tentada de novo na próxima rodada.
+- **Dizimação por `seq % 10`**: é determinística pelo `seq`, não pelo tempo. Em
+  sequências curtas (poucos snapshots), pode manter poucos ou nenhum snapshot
+  além da âncora.
+- **Conjunto de 32 chaves**: se houver mais de 32 confirmações fora de ordem
+  antes de o cursor alcançá-las, a mais antiga sai do conjunto e pode ser
+  reenviada. Duplicata, não perda.
+- **Conjunto em RAM**: reboot perde as confirmações fora de ordem; o cursor
+  fica atrás e reenvia. Duplicata, não perda.
+- **Reancoragem por compactação**: se a compactação remover a linha do cursor,
+  o cursor é invalidado e o arquivo é relido do início. Registros já confirmados
+  podem ser reenviados (duplicata), nunca perdidos; a validação no início de
+  `selecionarLote` evita escolher o backfill antes da âncora nesse caso.
+- **`'L'` e cursor**: o cursor na NVS é preservado de propósito (INC 4); como a
+  chave não existe no arquivo apagado, o próximo envio reancora. O conjunto e a
+  âncora são zerados; não use `'L'` esperando continuar a drenagem antiga.
+- **Boot antigo + evento**: um evento FIFO pode ser postado antes do boot
+  antigo (o evento é prioridade). O JSON tem `bootId`; o receptor deve
+  correlacionar. Se o contrato exigir o boot antes do evento, essa ordem
+  precisa mudar.
+- **`contarPendentes`** conta linhas após o cursor, incluindo snapshots que
+  serão dizimados; durante a drenagem ele pode superestimar. No fim, 0.
+- **Linha inválida/truncada no meio**: `avancarCursorResolvido` e
+  `buscarBackfill` param nela, então os registros seguintes ficam bloqueados
+  até a recuperação do INC 8. Uma linha truncada no fim (queda de energia)
+  também para a drenagem; é o caso já previsto para o INC 8.
+- **NVS após 2xx**: se faltar energia entre o 2xx e a gravação do cursor, o
+  registro é reenviado no próximo boot. Duplicata.
+- **`seqBase` u16**: após 65.535 registros no mesmo boot, o `seq` do JSON
+  trunca; limite do codec v1.
+- **Sem jitter** no backoff (pendente desde o INC 5).
+
+### Próximo
+
+O INC 8 foi dividido em **8A** (ganchos `'x'`/`'f'` e contabilidade de perdas,
+abaixo), **8B** (latência criação→2xx, p50/p95) e **8C** (protocolo de 20 min
+offline e tabela dos 12 critérios). O 8A está implementado e testado no host;
+falta a observação no hardware/Wokwi.
+
+> Sem commit, merge ou push nesta etapa.
+
+---
+
+## INC 8A — Ganchos de arquivo e contabilidade de perdas
+
+### Objetivo
+
+Dar meios de injetar uma linha truncada (`'x'`), forçar a compactação (`'f'`) e
+contar quantos registros **não confirmados** a compactação removeu
+(`perdidosNaoConfirmados`), sem mudar a política de drenagem do 7B.
+
+### Mudanças em `esp32/src/main_alt.cpp` (+120 / −6 sobre o 7B)
+
+| Item | Detalhe |
+|---|---|
+| `'x'` — `injetarLinhaTruncada()` | Abre a fila em `"a"`, grava 81 bytes de um JSON sem fechamento e **sem LF**, fecha e liga `arquivoPodeTerLinhaParcial`. O próximo `persistir()` ou o próximo boot chama `recuperarLinhaParcial()` e remove só a cauda. |
+| `'f'` — `forcarCompactacao()` | Se houver cauda parcial, repara antes. Chama `compactarFila(true)`, que mantém 3/4 do tamanho **atual** (não espera o arquivo chegar a 64 KB) e loga bytes antes/depois. |
+| `compactarFila(bool forcar)` | Assinatura ganhou o parâmetro (default `false`, preservando o `persistir()`). No modo normal continua mirando 48 KB e só age acima disso; no forçado mira `total * 3 / 4`. |
+| `offsetDoCursor(File&)` | Devolve o offset do início da linha do cursor `(bootId, seq)`, ou `(size_t)-1` se a chave sumiu. Usa `f.position()` antes/depois de `lerLinha`, sem contar offset de byte como identidade. |
+| `contarPerdidosNoPrefixo(File&, size_t)` | Varre `[0, ate)`: linha antes/na chave do cursor = confirmada; depois dela, só é confirmada se estiver em `g_resolvidos` (2xx fora de ordem). Sem cursor no arquivo, conta o prefixo inteiro (conservador). |
+| `g_envio.perdidos` | Novo contador `perdidosNaoConfirmados`; incrementado **somente depois** de `reescreverTrecho()` dar certo. `'i'` passa a imprimi-lo; `'L'` zera junto com `descartados`. |
+| `'i'` | Nova linha `perdidosNaoConfirmados: N` depois de `descartados`. |
+| Contabilidade | `descartados` continua contando **todas** as linhas antigas removidas; `perdidosNaoConfirmados` é o subconjunto que não tinha confirmação (cursor ou conjunto fora de ordem). |
+
+### O que NÃO mudou
+
+Amostragem, histerese, debounce, patamares, pinos, períodos, `montarLinha`,
+formato NDJSON, `persistir` no caminho normal, cursor na NVS, ordem do 7B
+(âncora → boot corrente → eventos FIFO → backfill dizimado), codec v1,
+`'d'`, `'L'`, `'o'`, `'e'`, `'t'`, `'i'` (só ganhou uma linha) e o ramo LoRa do
+`SIMULATION`.
+
+### Como testar no hardware/Wokwi
+
+1. Faça o build/upload e abra o monitor em 115200.
+2. `'L'` para começar com a fila vazia; espere o boot e pelo menos um snapshot
+   (o arquivo precisa ter uma linha completa antes do `'x'`).
+3. **Linha truncada:** pressione `'x'`. Deve aparecer
+   `TESTE: linha truncada injetada (81 bytes, sem LF)`.
+   - Resete o ESP32 **em até 5 s** (antes do próximo snapshot). No boot deve
+     aparecer `AVISO: linha parcial removida (81 bytes)` e o `'d'` deve mostrar
+     as linhas completas anteriores, sem a cauda.
+   - Se um snapshot chegar antes do reset, o próprio `persistir()` remove a
+     cauda; nesse caso repita o `'x'` para observar o caminho do boot.
+4. **Compactação forçada:** com pelo menos 4 linhas no arquivo, pressione `'f'`.
+   Deve aparecer `--- COMPACTACAO FORCADA ---`, uma linha
+   `Fila compactada (forcada): N registro(s) ...` e
+   `TESTE: compactacao forcada ok (X -> Y bytes)`. O `'d'`/`'i'` devem mostrar
+   menos bytes/linhas, e `descartados`/`perdidosNaoConfirmados` devem subir.
+5. **Cursor removido:** com o modo offline (`'o'`), deixe o cursor numa linha
+   antiga e force `'f'` até essa linha sair. Ao voltar online, o próximo envio
+   deve logar `ENVIO: cursor nao encontrado; reancorando no inicio`; duplicatas
+   são aceitáveis, perda não.
+6. **Contabilidade:** `'i'` deve mostrar
+   `perdidosNaoConfirmados <= descartados`. `'L'` zera os dois.
+7. Se o arquivo tiver só uma linha completa, `'f'` não remove nada (não há como
+   cortar 25% sem quebrar a única linha); o comando loga `sem efeito`.
+
+### Evidência
+
+Build limpo:
+
+```
+RAM:   [==        ]  15.3% (used 50212 bytes from 327680 bytes)
+Flash: [========  ]  76.9% (used 1008041 bytes from 1310720 bytes)
+========================= [SUCCESS] =========================
+```
+
+Teste de host com as funções **extraídas do firmware** (`lerLinha`,
+`extrairChave`, `indiceResolvido`, `offsetDoCursor`,
+`contarPerdidosNoPrefixo`, `inicioDaLinhaSeguinte`, `reescreverTrecho`,
+`recuperarLinhaParcial`, `compactarFila`, `forcarCompactacao`,
+`injetarLinhaTruncada`) e um LittleFS em memória. Doze cenários, todos OK:
+
+```
+== 1. forcada, sem cursor ==
+Fila compactada (forcada): 3 registro(s) antigo(s) descartado(s), 3 nao confirmado(s) (total 3/3)
+OK   descartados=3
+OK   perdidos=3
+== 2. cursor no seq 1, removido junto ==
+Fila compactada (forcada): 3 registro(s) antigo(s) descartado(s), 1 nao confirmado(s) (total 3/1)
+OK   perdidos=1 (so o seq 2)
+== 3. cursor no seq 2, ultimo removido ==
+OK   perdidos=0
+== 4. cursor no seq 8, preservado ==
+OK   perdidos=0
+OK   cursor ainda encontrado
+== 5. cursor ausente do arquivo ==
+OK   perdidos=3
+== 6. cursor 1 e seq 2 resolvido fora de ordem ==
+OK   perdidos=0
+== 7. cursor 0, seq 1 resolvido, seq 2 pendente ==
+OK   perdidos=1 (seq 2)
+== 8. compactacao normal em arquivo pequeno nao mexe ==
+OK   arquivo intacto
+== 9. injecao de linha truncada + recuperacao ==
+TESTE: linha truncada injetada (81 bytes, sem LF); resete para o boot recuperar
+AVISO: linha parcial removida (81 bytes)
+OK   recuperou exatamente as 2 linhas
+== 10. duas compactacoes forcadas acumulam ==
+OK   descartados=5 no total
+OK   perdidos=3 no total
+== 11. forcada em 2 linhas remove a mais antiga ==
+OK   descartados=1
+== 12. comando 'f' repara a cauda antes de compactar ==
+AVISO: linha parcial removida (81 bytes)
+Fila compactada (forcada): 3 registro(s) antigo(s) descartado(s), 3 nao confirmado(s) (total 3/3)
+TESTE: compactacao forcada ok (400 -> 280 bytes)
+TODOS OS CENARIOS OK
+```
+
+O método do host é o mesmo dos incrementos anteriores: as funções reais são
+copiadas de `main_alt.cpp` para um `.inc` em `/tmp/opencode`, com `File`,
+`LittleFS` e `Serial` simulados; o firmware não ganhou arquivo de teste.
+
+### Critério de aceite do 8A
+
+- `'x'` injeta uma linha JSON truncada sem LF; a recuperação remove apenas a
+  cauda e preserva as linhas completas: **passou no host; falta o reset no
+  hardware**.
+- `'f'` compacta mesmo abaixo de 64 KB, mantendo 3/4 do tamanho atual, e loga
+  bytes antes/depois: **passou no host; falta a observação no Wokwi**.
+- `perdidosNaoConfirmados` conta só o que estava depois do cursor e fora do
+  conjunto de resolvidos; não conta linhas confirmadas: **passou no host**.
+- `'L'` zera `descartados` e `perdidosNaoConfirmados`: **passou no host**
+  (reset explícito do teste).
+- Build limpo: **passou**.
+
+### Riscos e limitações do 8A
+
+- **Janela do `'x'`**: o próximo snapshot (5 s na simulação) chama `persistir()`
+  e repara a cauda antes do reset. O teste do caminho de boot exige reset
+  rápido; se perder a janela, o arquivo continua íntegro e o `'x'` pode ser
+  repetido.
+- **Arquivo só com a linha injetada**: `recuperarLinhaParcial()` calcula
+  `corte = 0` e `reescreverTrecho(0, 0)` não trunca. Neste firmware a linha de
+  boot sempre existe antes do `'x'`, então o caso não ocorre na operação
+  normal; fica registrado como limite do gancho de teste.
+- **Contabilidade após reboot**: o conjunto de confirmados fora de ordem vive
+  na RAM. Se um reboot acontecer antes de o cursor alcançá-los e a compactação
+  remover essas linhas, elas entram em `perdidosNaoConfirmados` mesmo já tendo
+  recebido 2xx (o receptor tem o dado; o firmware só não lembra). É
+  conservador: pode superestimar perdas, nunca esconder uma perda real.
+- **`perdidos` é cumulativo no boot** e só é zerado por `'L'`; a soma
+  `gerados = retidos + descartados` deve ser lida com `dizimados` separado
+  (política do 7B) e com `perdidosNaoConfirmados` como subconjunto de
+  `descartados`.
+- **Custo**: `contarPerdidosNoPrefixo()` é mais uma varredura O(arquivo), mas
+  só roda quando a compactação acontece (arquivo cheio ou `'f'`). A compactação
+  continua bloqueando o `loop()` durante a cópia, como antes.
+- **Uma linha**: `'f'` em arquivo com uma única linha completa não tem efeito
+  (não há corte possível sem quebrar a linha); em duas linhas, remove a mais
+  antiga.
+
+### Próximo
+
+**8B**: medir a latência criação→2xx por epoch (somente registros com
+`horaSincronizada:true` e do boot corrente; os demais ficam como
+`desconhecida`) e imprimir p50/p95 no `'i'`. **8C**: executar o protocolo de
+20 min offline e fechar a tabela dos 12 critérios finais.
+
+> Sem commit, merge ou push nesta etapa.

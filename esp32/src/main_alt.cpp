@@ -145,8 +145,10 @@ struct ContadoresEnvio {
   uint32_t tentativas;
   uint32_t confirmados;
   uint32_t falhas;
+  uint32_t dizimados;   // snapshots de backfill descartados pela política (INC 7B)
+  uint32_t perdidos;    // nao confirmados removidos pela compactacao (INC 8A)
 };
-static ContadoresEnvio g_envio = {0, 0, 0};
+static ContadoresEnvio g_envio = {0, 0, 0, 0, 0};
 
 // Estado do Wi-Fi, avançado por atualizarWifi() no loop (nunca bloqueia).
 enum EstadoWifi : uint8_t { WIFI_OCIOSO, WIFI_CONECTANDO, WIFI_CONECTADO };
@@ -167,6 +169,17 @@ static char     g_ackBootId[9] = {0};          // cursor: último 2xx confirmado
 static uint32_t g_ackSeq = 0;
 static bool     g_ackValido = false;
 static uint32_t g_reancoragens = 0;            // cursor sumiu (compactação): recomeçou
+
+// INC 7B: drenagem priorizada. O cursor continua sendo o último confirmado em
+// ordem de arquivo; confirmações fora de ordem ficam neste conjunto em RAM
+// (perdido no reboot => duplicata, nunca perda). O snapshot mais recente do
+// início da drenagem é a âncora; snapshots de backfill são 1 a cada N pelo seq.
+static const uint8_t DIZIMACAO_SNAPSHOTS = 10;
+struct ChaveResolvida { char boot[9]; uint32_t seq; };
+static ChaveResolvida g_resolvidos[32];
+static uint8_t  g_resolvidosN = 0;
+static bool     g_ancoraEnviada = false;
+static bool     g_ancoraSelecionada = false;
 
 // Estado da hora (INC 3): NTP e header Date são tentados sem bloquear o loop.
 static bool     g_ntpIniciado = false;
@@ -462,6 +475,12 @@ void tarefaAmostragem(void*) {
 
 // ===== ARMAZENAMENTO LOCAL ===================================================
 
+// Declaracoes antecipadas: a contabilidade da compactacao (INC 8A) usa estas
+// funcoes, definidas mais abaixo junto do cursor e da drenagem.
+static bool lerLinha(File& f, char* buffer, size_t tamanho);
+static bool extrairChave(const char* linha, char* bootId, uint32_t* seq);
+static int  indiceResolvido(const char* boot, uint32_t seq);
+
 // Reescreve /fila.ndjson guardando apenas os bytes [inicio, fim) do arquivo
 // atual. Grava antes em /fila.tmp e só então substitui o original por rename:
 // se faltar energia no meio, o arquivo original continua íntegro.
@@ -543,6 +562,46 @@ static uint32_t contarLinhasNoPrefixo(File& f, size_t ate) {
   return n;
 }
 
+// Offset do inicio da linha que contem a chave do cursor. (size_t)-1 quando o
+// cursor nao esta no arquivo (sumiu por compactacao ou nunca foi gravado).
+static size_t offsetDoCursor(File& f) {
+  if (!g_ackValido) return (size_t)-1;
+  if (!f.seek(0, SeekSet)) return (size_t)-1;
+  char linha[TAMANHO_LINHA + 16];
+  char boot[9];
+  uint32_t seq = 0;
+  size_t pos = 0;
+  while (lerLinha(f, linha, sizeof(linha))) {
+    size_t inicio = pos;
+    pos = (size_t)f.position();
+    if (!extrairChave(linha, boot, &seq)) continue;
+    if (strcmp(boot, g_ackBootId) == 0 && seq == g_ackSeq) return inicio;
+  }
+  return (size_t)-1;
+}
+
+// Conta, no prefixo [0, ate), as linhas que a compactacao vai remover sem
+// confirmacao. Uma linha antes/na chave do cursor esta confirmada; uma linha
+// depois so nao esta se tambem nao constar do conjunto de confirmados fora de
+// ordem. Sem cursor no arquivo, conta o prefixo inteiro (conservador).
+static uint32_t contarPerdidosNoPrefixo(File& f, size_t ate) {
+  size_t cursorOff = offsetDoCursor(f);
+  if (!f.seek(0, SeekSet)) return 0;
+  char linha[TAMANHO_LINHA + 16];
+  char boot[9];
+  uint32_t seq = 0, perdidos = 0;
+  size_t pos = 0;
+  while (pos < ate && lerLinha(f, linha, sizeof(linha))) {
+    size_t inicio = pos;
+    pos = (size_t)f.position();
+    if (inicio >= ate) break;
+    if (cursorOff != (size_t)-1 && inicio <= cursorOff) continue;
+    if (extrairChave(linha, boot, &seq) && indiceResolvido(boot, seq) >= 0) continue;
+    perdidos++;
+  }
+  return perdidos;
+}
+
 // Repara o arquivo se a última gravação ficou pela metade (falta de energia):
 // reescreve o arquivo sem a linha truncada, para que ele termine sempre em
 // linha completa.
@@ -566,27 +625,33 @@ static void recuperarLinhaParcial() {
 
 // Política de arquivo cheio: descarta os registros MAIS ANTIGOS e mantém os
 // novos. Libera espaço em blocos (3/4 do limite), reescrevendo o que sobra
-// num arquivo temporário e trocando por rename.
-static bool compactarFila() {
+// num arquivo temporário e trocando por rename. Com forcar=true (comando 'f'),
+// compacta mesmo sem o arquivo estar cheio, mantendo 3/4 do tamanho atual.
+static bool compactarFila(bool forcar = false) {
   File f = LittleFS.open(ARQ_FILA, "r");
   if (!f) return false;
   size_t total = f.size();
   if (total == 0) { f.close(); return true; }
 
-  size_t alvo = (MAX_BYTES_FILA / 4) * FRACAO_MANTER;  // 3/4 do limite
-  if (total <= alvo) { f.close(); return true; }        // já cabe
+  size_t alvo = forcar ? (total * FRACAO_MANTER / 4)
+                       : ((MAX_BYTES_FILA / 4) * FRACAO_MANTER);
+  if (total <= alvo) { f.close(); return true; }  // já cabe (ou pequeno demais)
 
   size_t inicio = inicioDaLinhaSeguinte(f, total - alvo);
   if (inicio == 0 || inicio >= total) { f.close(); return false; }
 
   uint32_t removidos = contarLinhasNoPrefixo(f, inicio);
+  uint32_t perdidos  = contarPerdidosNoPrefixo(f, inicio);
   f.close();
 
   if (!reescreverTrecho(inicio, total)) return false;
 
   descartados += removidos;
-  Serial.printf("Fila cheia: %lu registro(s) antigo(s) descartado(s) (total %lu)\n",
-                (unsigned long)removidos, (unsigned long)descartados.load());
+  g_envio.perdidos += perdidos;
+  Serial.printf("%s: %lu registro(s) antigo(s) descartado(s), %lu nao confirmado(s) (total %lu/%lu)\n",
+                forcar ? "Fila compactada (forcada)" : "Fila cheia",
+                (unsigned long)removidos, (unsigned long)perdidos,
+                (unsigned long)descartados.load(), (unsigned long)g_envio.perdidos);
   return true;
 }
 
@@ -656,8 +721,54 @@ void limparFila() {
   LittleFS.remove(ARQ_FILA);
   LittleFS.remove(ARQ_TMP);
   descartados = 0;
+  g_envio.perdidos = 0;  // comeca uma contabilidade nova junto com o arquivo
   arquivoPodeTerLinhaParcial = false;
+
+  // INC 7B: o arquivo sumiu, entao o conjunto de confirmados fora de ordem e a
+  // ancora nao valem mais. O cursor na NVS e preservado de proposito (como no
+  // INC 4): a proxima selecao nao acha a chave e reancora no inicio.
+  g_resolvidosN = 0;
+  g_ancoraEnviada = false;
+  g_ancoraSelecionada = false;
+
   Serial.println("Arquivo apagado.");
+}
+
+// Comando 'x' (INC 8): injeta uma linha JSON truncada, sem LF, no fim do
+// arquivo. O proximo persistir (ou o proximo boot) chama recuperarLinhaParcial
+// e remove so essa cauda, sem tocar nas linhas completas anteriores.
+static void injetarLinhaTruncada() {
+  File f = LittleFS.open(ARQ_FILA, "a");
+  if (!f) { Serial.println("TESTE: nao abriu a fila para injetar"); return; }
+  static const char* TRUNCADA =
+      "{\"tipo\":\"snapshot\",\"idJardim\":\"jardim-centro-01\","
+      "\"idSensor\":\"jardim\",\"nivelAgua\":";
+  size_t n = f.print(TRUNCADA);  // sem '\n' de proposito
+  f.close();
+  arquivoPodeTerLinhaParcial = true;
+  Serial.printf("TESTE: linha truncada injetada (%u bytes, sem LF); resete para o boot recuperar\n",
+                (unsigned)n);
+}
+
+// Comando 'f' (INC 8): força a compactação mesmo com o arquivo abaixo do
+// limite, mantendo 3/4 do tamanho atual. Antes, repara uma eventual cauda
+// parcial para a contabilidade de linhas nao misturar os dois casos.
+static void forcarCompactacao() {
+  if (arquivoPodeTerLinhaParcial) {
+    recuperarLinhaParcial();
+    arquivoPodeTerLinhaParcial = false;
+  }
+  File f = LittleFS.open(ARQ_FILA, "r");
+  size_t antes = f ? f.size() : 0;
+  if (f) f.close();
+  Serial.println("--- COMPACTACAO FORCADA ---");
+  bool ok = compactarFila(true);
+  f = LittleFS.open(ARQ_FILA, "r");
+  size_t depois = f ? f.size() : 0;
+  if (f) f.close();
+  Serial.printf("TESTE: compactacao forcada %s (%u -> %u bytes)\n",
+                ok && depois < antes ? "ok" : "sem efeito",
+                (unsigned)antes, (unsigned)depois);
 }
 
 // ===== CURSOR DE CONFIRMACAO (INC 4) =========================================
@@ -748,10 +859,14 @@ void imprimirDiagnostico() {
   Serial.printf("tentativas: %lu\n", (unsigned long)g_envio.tentativas);
   Serial.printf("confirmados: %lu\n", (unsigned long)g_envio.confirmados);
   Serial.printf("falhas: %lu\n", (unsigned long)g_envio.falhas);
+  Serial.printf("dizimados: %lu\n", (unsigned long)g_envio.dizimados);
+  Serial.printf("resolvidosFora: %u\n", (unsigned)g_resolvidosN);
+  Serial.printf("ancora: %s\n", g_ancoraEnviada ? "enviada" : "pendente");
   Serial.printf("ultimoErro: %s\n", g_ultimoErro);
   int32_t restante = (int32_t)(g_proximaTentativaMs - millis());
   Serial.printf("proximoEnvioEm: %ld s\n", restante > 0 ? (long)(restante / 1000) : 0L);
   Serial.printf("descartados: %lu\n", (unsigned long)descartados.load());
+  Serial.printf("perdidosNaoConfirmados: %lu\n", (unsigned long)g_envio.perdidos);
   Serial.printf("bootId: %s\n", g_bootId);
   Serial.printf("relogio: %s\n", relogioValido() ? "valido" : "invalido");
 }
@@ -1149,8 +1264,11 @@ static void agendarNovaTentativa(int codigo) {
                 (unsigned long)(espera / 1000));
 }
 
-// ===== LOTE (INC 7A) =========================================================
-// Até 6 linhas consecutivas do mesmo boot, com seq crescente e gap <= 255.
+// ===== DRENAGEM (INC 7B) =====================================================
+// Ordem: snapshot mais recente (âncora, uma vez por drenagem) -> boot do boot
+// corrente -> eventos FIFO -> backfill (boot antigo + snapshots 1 a cada
+// DIZIMACAO_SNAPSHOTS). Um quadro não mistura boots. Eventos novos furam a fila
+// dos snapshots porque são escolhidos antes deles em cada rodada.
 struct LoteLinhas {
   char linha[6][TAMANHO_LINHA + 16];
   char boot[6][9];
@@ -1171,57 +1289,295 @@ static bool pularAteCursor(File& f) {
   return false;
 }
 
-// Lê do arquivo (já posicionado) até "max" linhas do mesmo boot.
-static void coletarLote(File& f, LoteLinhas* lote, int max) {
-  char linha[TAMANHO_LINHA + 16];
-  char boot[9];
-  uint32_t seq = 0;
-  while (lote->n < max && lerLinha(f, linha, sizeof(linha))) {
-    if (!extrairChave(linha, boot, &seq)) continue;
-    if (lote->n > 0) {
-      if (strcmp(boot, lote->boot[0]) != 0) break;   // não mistura boots
-      uint32_t anterior = lote->seq[lote->n - 1];
-      if (seq <= anterior) break;                    // fora de ordem/duplicata
-      if (seq - anterior - 1 > 255) break;           // gap não cabe em u8
-    }
-    strncpy(lote->linha[lote->n], linha, sizeof(lote->linha[0]) - 1);
-    lote->linha[lote->n][sizeof(lote->linha[0]) - 1] = '\0';
-    memcpy(lote->boot[lote->n], boot, 9);
-    lote->seq[lote->n] = seq;
-    lote->n++;
+static int indiceResolvido(const char* boot, uint32_t seq) {
+  for (int i = 0; i < g_resolvidosN; i++) {
+    if (g_resolvidos[i].seq == seq && strcmp(g_resolvidos[i].boot, boot) == 0) return i;
   }
+  return -1;
 }
 
-// Monta o lote a partir do cursor; se a chave sumiu, reancora e conta.
-static int buscarLote(LoteLinhas* lote, int max) {
-  lote->n = 0;
+static void removerResolvido(int idx) {
+  if (idx < 0 || idx >= g_resolvidosN) return;
+  for (int i = idx; i < g_resolvidosN - 1; i++) g_resolvidos[i] = g_resolvidos[i + 1];
+  g_resolvidosN--;
+}
+
+static void marcarResolvido(const char* boot, uint32_t seq) {
+  if (indiceResolvido(boot, seq) >= 0) return;
+  if (g_resolvidosN >= 32) {
+    // Sem espaço: descarta a chave mais antiga. O cursor pode reenviar depois
+    // (duplicata), mas não perde o registro.
+    removerResolvido(0);
+  }
+  memcpy(g_resolvidos[g_resolvidosN].boot, boot, 9);
+  g_resolvidos[g_resolvidosN].seq = seq;
+  g_resolvidosN++;
+}
+
+// Abre a fila depois do cursor. Se a chave sumiu (compactação), reancora no
+// início e limpa o conjunto: os confirmados fora de ordem podem duplicar.
+static File abrirAposCursor(bool* ok) {
+  *ok = false;
   File f = LittleFS.open(ARQ_FILA, "r");
-  if (!f) return 0;
-  if (!pularAteCursor(f)) {
-    f.close();
-    g_reancoragens++;
-    Serial.println("ENVIO: cursor nao encontrado; reancorando no inicio");
-    f = LittleFS.open(ARQ_FILA, "r");
-    if (!f) return 0;
-  }
-  coletarLote(f, lote, max);
+  if (!f) return f;
+  if (pularAteCursor(f)) { *ok = true; return f; }
   f.close();
-  return lote->n;
+  g_reancoragens++;
+  g_resolvidosN = 0;
+  g_ancoraEnviada = false;
+  g_ackValido = false;       // cursor antigo sumiu: não tenta reencontrá-lo
+  g_ackBootId[0] = '\0';
+  g_ackSeq = 0;
+  Serial.println("ENVIO: cursor nao encontrado; reancorando no inicio");
+  f = LittleFS.open(ARQ_FILA, "r");
+  *ok = (bool)f;
+  return f;
 }
 
-// Avança o cursor só depois do 2xx e grava na NVS. Duplicata é aceitável.
-// "quantidade" é o número de registros do lote confirmados de uma vez.
-static void confirmarCursor(const char* bootId, uint32_t seq, int quantidade) {
-  memcpy(g_ackBootId, bootId, 8);
-  g_ackBootId[8] = '\0';
-  g_ackSeq = seq;
-  g_ackValido = true;
-  g_envio.confirmados += (uint32_t)quantidade;
+static uint8_t tipoDaLinha(const char* linha) {
+  char tipo[12];
+  if (!campoTxt(linha, CAMPO_TIPO, tipo, sizeof(tipo))) return 255;
+  if (strcmp(tipo, TIPO_EVENTO) == 0) return codec::EVENTO;
+  if (strcmp(tipo, TIPO_SNAPSHOT) == 0) return codec::SNAPSHOT;
+  if (strcmp(tipo, TIPO_BOOT) == 0) return codec::BOOT;
+  return 255;
+}
+
+static const char* nomeTipoCodec(uint8_t t) {
+  return t == codec::EVENTO ? "evento" : t == codec::SNAPSHOT ? "snapshot"
+       : t == codec::BOOT ? "boot" : "?";
+}
+
+// Grava o cursor atual na NVS (uma vez por avanço, não por registro).
+static void persistirCursor() {
+  if (!g_ackValido) return;
   Preferences p;
   if (!p.begin(NVS_ESPACO, false)) { Serial.println("NVS: falha ao gravar cursor"); return; }
   p.putString(NVS_ACK_BOOT, g_ackBootId);
   p.putUInt(NVS_ACK_SEQ, g_ackSeq);
   p.end();
+}
+
+// Avança o cursor enquanto a próxima linha já foi confirmada (fora de ordem)
+// ou é um snapshot dizimado. Para no primeiro registro que precisa ser
+// enviado (boot, evento, snapshot mantido ou linha inválida).
+static bool avancarCursorResolvido() {
+  bool ok = false;
+  File f = abrirAposCursor(&ok);
+  if (!ok) return false;
+  // Se o cursor sumiu, abrirAposCursor reancorou e zerou a âncora. Não descarta
+  // snapshots antes de a âncora nova ser escolhida.
+  if (!g_ancoraEnviada) { f.close(); return false; }
+  bool mudou = false;
+  char linha[TAMANHO_LINHA + 16];
+  char boot[9];
+  uint32_t seq = 0;
+
+  while (lerLinha(f, linha, sizeof(linha))) {
+    if (!extrairChave(linha, boot, &seq)) break;
+    int idx = indiceResolvido(boot, seq);
+    if (idx >= 0) {
+      removerResolvido(idx);
+      memcpy(g_ackBootId, boot, 9);
+      g_ackSeq = seq;
+      g_ackValido = true;
+      mudou = true;
+      continue;
+    }
+    uint8_t tipo = tipoDaLinha(linha);
+    if (tipo == codec::SNAPSHOT && (seq % DIZIMACAO_SNAPSHOTS) != 0) {
+      g_envio.dizimados++;
+      memcpy(g_ackBootId, boot, 9);
+      g_ackSeq = seq;
+      g_ackValido = true;
+      mudou = true;
+      continue;
+    }
+    break;
+  }
+  f.close();
+  if (mudou) persistirCursor();
+  return mudou;
+}
+
+static void adicionarCandidato(LoteLinhas* lote, const char* linha, const char* boot, uint32_t seq) {
+  if (lote->n >= 6) return;
+  strncpy(lote->linha[lote->n], linha, sizeof(lote->linha[0]) - 1);
+  lote->linha[lote->n][sizeof(lote->linha[0]) - 1] = '\0';
+  memcpy(lote->boot[lote->n], boot, 9);
+  lote->seq[lote->n] = seq;
+  lote->n++;
+}
+
+// Âncora: o snapshot mais recente ainda não resolvido, uma vez por drenagem.
+static bool buscarAncora(LoteLinhas* lote) {
+  bool ok = false;
+  File f = abrirAposCursor(&ok);
+  if (!ok) return false;
+  char linha[TAMANHO_LINHA + 16];
+  char melhor[TAMANHO_LINHA + 16];
+  char boot[9], melhorBoot[9];
+  uint32_t seq = 0, melhorSeq = 0;
+  bool tem = false;
+
+  while (lerLinha(f, linha, sizeof(linha))) {
+    if (!extrairChave(linha, boot, &seq)) break;
+    if (indiceResolvido(boot, seq) >= 0) continue;
+    if (tipoDaLinha(linha) != codec::SNAPSHOT) continue;
+    strncpy(melhor, linha, sizeof(melhor) - 1);
+    melhor[sizeof(melhor) - 1] = '\0';
+    memcpy(melhorBoot, boot, 9);
+    melhorSeq = seq;
+    tem = true;
+  }
+  f.close();
+  if (tem) adicionarCandidato(lote, melhor, melhorBoot, melhorSeq);
+  return tem;
+}
+
+// Boot indicado (se ainda não resolvido) + até max-1 eventos dele, em ordem.
+static int coletarBoot(LoteLinhas* lote, const char* alvo, int max) {
+  bool ok = false;
+  File f = abrirAposCursor(&ok);
+  if (!ok) return 0;
+  char linha[TAMANHO_LINHA + 16];
+  char boot[9];
+  uint32_t seq = 0;
+  bool achouBoot = false;
+
+  while (lote->n < max && lerLinha(f, linha, sizeof(linha))) {
+    if (!extrairChave(linha, boot, &seq)) break;
+    if (strcmp(boot, alvo) != 0) continue;
+    if (indiceResolvido(boot, seq) >= 0) continue;
+    uint8_t tipo = tipoDaLinha(linha);
+    if (!achouBoot) {
+      if (tipo == codec::BOOT) {
+        adicionarCandidato(lote, linha, boot, seq);
+        achouBoot = true;
+      } else if (tipo == codec::EVENTO) {
+        break;  // boot já resolvido/antes do cursor; eventos ficam para a etapa 4
+      }
+      continue;
+    }
+    if (tipo != codec::EVENTO) continue;
+    uint32_t anterior = lote->seq[lote->n - 1];
+    if (seq <= anterior || seq - anterior - 1 > 255) break;
+    adicionarCandidato(lote, linha, boot, seq);
+  }
+  f.close();
+  return lote->n;
+}
+
+// Eventos FIFO: o mais antigo não resolvido (qualquer boot) e os próximos do
+// mesmo boot, até max. Um evento novo entra aqui e fura os snapshots.
+static int buscarEventos(LoteLinhas* lote, int max) {
+  bool ok = false;
+  File f = abrirAposCursor(&ok);
+  if (!ok) return 0;
+  char linha[TAMANHO_LINHA + 16];
+  char boot[9], alvo[9] = {0};
+  uint32_t seq = 0;
+  bool temAlvo = false;
+
+  while (lote->n < max && lerLinha(f, linha, sizeof(linha))) {
+    if (!extrairChave(linha, boot, &seq)) break;
+    if (indiceResolvido(boot, seq) >= 0) continue;
+    if (tipoDaLinha(linha) != codec::EVENTO) continue;
+    if (!temAlvo) {
+      memcpy(alvo, boot, 9);
+      temAlvo = true;
+    } else if (strcmp(boot, alvo) != 0) {
+      break;  // mantém a ordem FIFO: outro boot fica para o próximo lote
+    }
+    if (lote->n > 0) {
+      uint32_t anterior = lote->seq[lote->n - 1];
+      if (seq <= anterior || seq - anterior - 1 > 255) break;
+    }
+    adicionarCandidato(lote, linha, boot, seq);
+  }
+  f.close();
+  return lote->n;
+}
+
+// Backfill a partir do cursor: inclui o boot antigo (contexto/coordenadas) e
+// os snapshots mantidos (seq % N == 0) do mesmo boot, até max. Um boot não é
+// dizimado; os snapshots fora da política serão descartados pelo cursor. Para
+// no próximo boot ou evento (prioridade já tratada nas etapas anteriores).
+static int buscarBackfill(LoteLinhas* lote, int max) {
+  bool ok = false;
+  File f = abrirAposCursor(&ok);
+  if (!ok) return 0;
+  char linha[TAMANHO_LINHA + 16];
+  char boot[9], alvo[9] = {0};
+  uint32_t seq = 0;
+
+  while (lote->n < max && lerLinha(f, linha, sizeof(linha))) {
+    if (!extrairChave(linha, boot, &seq)) break;
+    uint8_t tipo = tipoDaLinha(linha);
+    if (tipo == 255) break;
+    if (indiceResolvido(boot, seq) >= 0) continue;
+    if (tipo == codec::EVENTO) break;
+
+    if (tipo == codec::BOOT) {
+      if (lote->n > 0 && strcmp(boot, alvo) != 0) break;
+      if (lote->n == 0) {
+        memcpy(alvo, boot, 9);
+        adicionarCandidato(lote, linha, boot, seq);
+      }
+      continue;
+    }
+
+    if ((seq % DIZIMACAO_SNAPSHOTS) != 0) continue;
+    if (lote->n == 0) {
+      memcpy(alvo, boot, 9);
+    } else {
+      if (strcmp(boot, alvo) != 0) break;
+      uint32_t anterior = lote->seq[lote->n - 1];
+      if (seq <= anterior || seq - anterior - 1 > 255) break;
+    }
+    adicionarCandidato(lote, linha, boot, seq);
+  }
+  f.close();
+  return lote->n;
+}
+
+// Escolhe o próximo quadro segundo a prioridade do INC 7B.
+static int selecionarLote(LoteLinhas* lote, int max) {
+  lote->n = 0;
+  g_ancoraSelecionada = false;
+
+  // Valida/reancora o cursor uma vez, antes de decidir a ordem. Se ele sumiu,
+  // abrirAposCursor limpa o conjunto e a âncora; a âncora abaixo já vale para
+  // a nova base. Evita reancorar no meio de um lote e pular a âncora.
+  bool ok = false;
+  File f = abrirAposCursor(&ok);
+  if (f) f.close();
+  if (!ok) return 0;
+
+  if (!g_ancoraEnviada) {
+    if (buscarAncora(lote)) {
+      g_ancoraSelecionada = true;
+      return lote->n;
+    }
+    g_ancoraEnviada = true;  // não há snapshot pendente para ancorar
+  }
+
+  avancarCursorResolvido();
+
+  // Reancorou durante o avanço (compactação): escolhe a âncora agora, antes de
+  // qualquer backfill, em vez de deixar para a próxima rodada.
+  if (!g_ancoraEnviada) {
+    if (buscarAncora(lote)) {
+      g_ancoraSelecionada = true;
+      return lote->n;
+    }
+    g_ancoraEnviada = true;
+  }
+
+  if (coletarBoot(lote, g_bootId, max) > 0) return lote->n;
+  if (buscarEventos(lote, max) > 0) return lote->n;
+  if (buscarBackfill(lote, max) > 0) return lote->n;
+  return 0;
 }
 
 // Tenta enviar o próximo pendente. Sem pendente, libera a varredura; em falha,
@@ -1232,9 +1588,11 @@ static void confirmarCursor(const char* bootId, uint32_t seq, int quantidade) {
 static void tentarEnviarLote() {
   // Estático para não somar ~2 KB de pilha ao WiFiClientSecure/HTTPClient.
   static LoteLinhas lote;
-  int achadas = buscarLote(&lote, 6);
+  int achadas = selecionarLote(&lote, 6);
   if (achadas == 0) {
     g_temPendente = false;
+    g_ancoraEnviada = false;       // próxima drenagem ancora de novo
+    g_ancoraSelecionada = false;
     return;
   }
 
@@ -1242,6 +1600,11 @@ static void tentarEnviarLote() {
   bool horaSinc[6] = {false};
   int n = 0;
   for (int i = 0; i < achadas; i++) {
+    // Registros do mesmo quadro precisam de seq crescente e gap <= 255.
+    if (n > 0) {
+      uint32_t anterior = lote.seq[i - 1];
+      if (lote.seq[i] <= anterior || lote.seq[i] - anterior - 1 > 255) break;
+    }
     codec::Quadro uma;
     bool hs = false;
     if (!montarQuadroDaLinha(lote.linha[i], &uma, &hs)) break;
@@ -1264,6 +1627,7 @@ static void tentarEnviarLote() {
 
   if (n == 0) {
     Serial.println("ENVIO: primeira linha do lote invalida");
+    g_ancoraSelecionada = false;
     g_envio.falhas++;
     agendarNovaTentativa(-4);
     return;
@@ -1290,6 +1654,12 @@ static void tentarEnviarLote() {
 
   // Gateway local: um POST por registro, na ordem do quadro. O prefixo 2xx é
   // o que o cursor pode confirmar; o primeiro erro interrompe o lote.
+  Serial.printf("ENVIO: lote %d [%lu ms]:", d.n, (unsigned long)millis());
+  for (int i = 0; i < d.n; i++) {
+    Serial.printf(" %s/%u", nomeTipoCodec(d.regs[i].tipo), (unsigned)d.regs[i].seq);
+  }
+  Serial.println();
+
   int confirmados = 0;
   int codigo = 0;
   for (int i = 0; i < d.n; i++) {
@@ -1307,7 +1677,15 @@ static void tentarEnviarLote() {
   }
 
   if (confirmados > 0) {
-    confirmarCursor(lote.boot[confirmados - 1], lote.seq[confirmados - 1], confirmados);
+    for (int i = 0; i < confirmados; i++) marcarResolvido(lote.boot[i], lote.seq[i]);
+    g_envio.confirmados += (uint32_t)confirmados;
+    if (g_ancoraSelecionada) g_ancoraEnviada = true;
+    g_ancoraSelecionada = false;
+    // Pode avançar o cursor por registros já resolvidos/dizimados; grava a NVS
+    // no máximo uma vez. O que não for contíguo fica no conjunto em RAM.
+    avancarCursorResolvido();
+  } else {
+    g_ancoraSelecionada = false;
   }
 
   if (confirmados == d.n) {
@@ -1335,6 +1713,7 @@ static void tentarEnviarLote() {
 // Comando 'o': alterna o modo offline lógico; o arquivo continua crescendo.
 static void alternarOffline() {
   g_offline = !g_offline;
+  if (!g_offline) g_ancoraEnviada = false;  // nova drenagem: ancora de novo
   Serial.printf("ENVIO: modo %s\n", g_offline ? "offline (nao envia)" : "online");
 }
 
@@ -1427,6 +1806,8 @@ void loop() {
     else if (c == 'o') alternarOffline();
     else if (c == 'e') alternarRespostaForcada();
     else if (c == 't') rodarTesteCodec();
+    else if (c == 'x') injetarLinhaTruncada();
+    else if (c == 'f') forcarCompactacao();
   }
 
   // ENVIO (INC 7A): varre o arquivo e manda um lote de até 6 não confirmados.
