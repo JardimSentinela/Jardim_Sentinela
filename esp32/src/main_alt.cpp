@@ -3,6 +3,7 @@
 #include <LittleFS.h>
 #include <time.h>
 #include <atomic>
+#include "hw02_sonda.h"
 
 // Compile com -DSIMULATION no Wokwi (build_flags no platformio.ini) para
 // injetar ruído nas leituras e encurtar o período do snapshot.
@@ -100,6 +101,21 @@ void tarefaAmostragem(void*) {
   TickType_t ultimo = xTaskGetTickCount();
 
   for (;;) {
+
+    // ===== HW-02 - SONDA DE NIVEL =====
+    LeituraSonda leituraSonda;
+
+    if (atualizarSonda(leituraSonda)) {
+      Serial.printf(
+          "[HW-02] ADC: %d | Nivel: %.2f cm | Taxa: %.2f cm/min | Mudou: %s\n",
+          leituraSonda.adc,
+          leituraSonda.nivelCm,
+          leituraSonda.taxaCmMin,
+          leituraSonda.mudou ? "SIM" : "NAO"
+      );
+    }
+
+    // ===== SENSORES RESISTIVOS T1592 =====
     for (uint8_t i = 0; i < N_SENSORES; i++) {
       uint16_t raw = lerSensor(i);
       bool cruzou = estado[i] ? (raw < LIMIAR_SECA[i]) : (raw > LIMIAR_MOLHA[i]);
@@ -201,6 +217,8 @@ void setup() {
   }
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
+
+  iniciarSonda();
 
   if (!LittleFS.begin(true)) Serial.println("ERRO: LittleFS");
 

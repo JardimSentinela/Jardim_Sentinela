@@ -1,13 +1,13 @@
-
 Import("env")
 import os
 
 def merge_firmware(source, target, env):
     build_dir = env.subst("$BUILD_DIR")
     merged = os.path.join(build_dir, "firmware.merged.bin")
+
     esptool = os.path.join(
-        env.PioPlatform().get_package_dir("tool-esptoolpy"),
-        "esptool.py"
+        env.PioPlatform().get_package_dir("tool-esptool"),
+        "esptool.exe"
     )
 
     images = [
@@ -17,12 +17,15 @@ def merge_firmware(source, target, env):
     ]
 
     command = [
-        env.subst("$PYTHONEXE"), esptool,
-        "--chip", "esp32", "merge_bin",
-        "-o", merged,
-        "--flash_size", "4MB"
-    ] + images
+        '"' + esptool + '"',
+        "--chip", "esp32", "merge-bin",
+        "-o", '"' + merged + '"',
+        "--flash-size", "4MB"
+    ] + [
+        '"' + item + '"' if os.path.isabs(item) else item
+        for item in images
+    ]
 
-    env.Execute(" ".join('"' + item + '"' for item in command))
+    env.Execute(" ".join(command))
 
 env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", merge_firmware)
