@@ -82,6 +82,60 @@ afeta diretamente o que o firmware precisa medir. O ESP32 hoje produz
 `molhado`, `bootId`, `seq` e `tMs` (`esp32/main_alt.cpp`, linha 112), e esse
 firmware ainda está marcado como rascunho não definitivo.
 
+## Sonda de nível HW-02 — `sensor-04`
+
+O firmware também lê uma **sonda de nível contínua** (HW-02), além da escada de
+sensores resistivos T1592. Ela não cria campo novo no contrato: o nível medido
+continua sendo `nivelAgua`, em centímetros.
+
+| Item | Valor |
+| --- | --- |
+| Pino (Wokwi) | `GPIO35` (potenciômetro `pot4`, alimentado em `3V3`) |
+| Faixa nominal | 0 a 100 cm (ADC 12 bits → `adc / 4095 * 100`) |
+| Janela de amostragem | 500 ms, média de 10 leituras |
+| Identidade no arquivo | índice `3` → `"sensor-04"` |
+| Evento | só quando o nível varia **≥ 1 cm** (`mudou`) |
+| `deltaTMs` no evento | ausente (`0`): a sonda não mede tempo entre patamares |
+
+### O que vai em cada linha
+
+| Linha | `idSensor` | `nivelAgua` |
+| --- | --- | --- |
+| `boot` | `"jardim"` | escada T1592 (a sonda ainda não leu) |
+| `snapshot` (heartbeat) | `"jardim"` | nível contínuo da sonda; se ela ainda não leu, escada T1592 |
+| `evento` da sonda | `"sensor-04"` | nível contínuo no momento da variação |
+| `evento` da escada | `"sensor-01"`..`"sensor-03"` | 5, 10 ou 15 cm |
+
+A sonda só tem a primeira leitura depois de 500 ms. Por isso a linha de `boot`
+e o primeiro `snapshot` usam a escada; do segundo `snapshot` em diante o valor
+é o da sonda.
+
+### Exemplos NDJSON (arquivo local)
+
+```json
+{"tipo":"boot","idJardim":"jardim-centro-01","idSensor":"jardim","nivelAgua":0.0,"bateria":87,"timestamp":"2026-10-15T02:25:28Z","seq":0,"bootId":"1A2B3C4D","lat":-8.057800,"lon":-34.881300,"horaSincronizada":false,"origem":"simulacao"}
+{"tipo":"snapshot","idJardim":"jardim-centro-01","idSensor":"jardim","nivelAgua":42.5,"bateria":87,"timestamp":"2026-10-15T02:25:58Z","seq":12,"bootId":"1A2B3C4D","horaSincronizada":false,"origem":"simulacao"}
+{"tipo":"evento","idJardim":"jardim-centro-01","idSensor":"sensor-04","nivelAgua":43.0,"bateria":87,"timestamp":"2026-10-15T02:26:03Z","seq":13,"bootId":"1A2B3C4D","horaSincronizada":false,"origem":"simulacao"}
+{"tipo":"evento","idJardim":"jardim-centro-01","idSensor":"sensor-02","nivelAgua":10.0,"bateria":87,"timestamp":"2026-10-15T02:26:10Z","seq":14,"bootId":"1A2B3C4D","deltaTMs":120000,"horaSincronizada":false,"origem":"simulacao"}
+```
+
+### Limites conhecidos
+
+- **Resolução de 1 cm no quadro v1.** O codec guarda `nivelCm` como `uint8` e
+  arredonda (`nivel + 0.5`). O arquivo local pode ter 0,1 cm (`42.5`), mas o
+  dado que chega à API via gateway volta com 1 cm (`43.0`).
+- **`taxaCmMin` não é transmitida.** A sonda calcula a taxa (cm/min) sobre a
+  última janela de ~500 ms e mostra só no log serial. O quadro v1 não tem
+  campo para isso e o contrato ainda não define esse dado.
+- **`alerta` não existe.** Não há campo de alarme/limiar no firmware nem no
+  contrato; qualquer alerta hoje teria de ser derivado na API/gateway.
+- **Calibração nominal.** A conversão ADC → cm é linear e não satura acima de
+  4095; a calibração real da sonda ainda não foi feita.
+- **Nomes de campo divergentes na API.** O firmware grava `idJardim`,
+  `idSensor`, `nivelAgua` e `timestamp`; o DTO atual de `/api/leituras` espera
+  `jardimId`, `sensorId`, `nivelCm` e `bateria`, e ignora o `timestamp`
+  enviado. Essa divergência é do pipeline, não da sonda.
+
 ## Outras observações
 
 - **Unidade do nível:** adotada em centímetros. O nome do campo (`nivelAgua`)
