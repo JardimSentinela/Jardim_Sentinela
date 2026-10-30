@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Testes automatizados de host da camada de envio do ESP32.
+"""Testes automatizados de host do firmware do ESP32.
 
-Os testes compilam funcoes reais extraidas de src/main_alt.cpp contra stubs de
-Arduino/LittleFS. Nao precisam de placa, Wi-Fi ou receptor HTTPS.
+Os testes compilam funcoes reais extraidas de src/main_alt.cpp e o
+src/hw02_sonda.cpp inteiro contra stubs de Arduino/LittleFS. Nao precisam de
+placa, Wi-Fi ou receptor HTTPS.
 
 Uso:
     python3 test/host/run_tests.py
@@ -21,6 +22,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ESP32 = HERE.parents[1]
 SRC = ESP32 / "src" / "main_alt.cpp"
+SONDA_SRC = ESP32 / "src" / "hw02_sonda.cpp"
 BUILD = HERE / ".build"
 
 # Funcoes extraidas do firmware, por grupo de teste. O extrator usa o corpo
@@ -76,6 +78,7 @@ TESTS = [
     ("drenagem_20min", "test_drenagem_20min.cpp", ["drenagem"]),
     ("url", "test_url.cpp", ["url"]),
     ("backoff", "test_backoff.cpp", ["backoff"]),
+    ("sonda", "test_sonda.cpp", []),
 ]
 
 START_RE = re.compile(
@@ -165,6 +168,18 @@ def gerar_headers(source: str) -> None:
         print(f"  extraido: {grupo}.inc ({len(trechos)} funcoes)")
 
 
+def gerar_sonda_inc() -> None:
+    """Copia o hw02_sonda.cpp inteiro: ele tem constantes e estado de modulo."""
+    destino = BUILD / "sonda.inc"
+    destino.write_text(
+        "// Gerado por run_tests.py a partir de src/hw02_sonda.cpp\n\n"
+        + SONDA_SRC.read_text(encoding="utf-8")
+        + "\n",
+        encoding="utf-8",
+    )
+    print("  extraido: sonda.inc (arquivo inteiro)")
+
+
 def compilar(nome: str, arquivo: str) -> Path:
     exe = BUILD / nome
     cmd = [
@@ -177,6 +192,8 @@ def compilar(nome: str, arquivo: str) -> Path:
         str(ESP32 / "src"),
         "-I",
         str(BUILD),
+        "-I",
+        str(HERE / "stubs"),
         str(HERE / arquivo),
         "-o",
         str(exe),
@@ -205,14 +222,16 @@ def rodar(exe: Path, verbose: bool) -> None:
 def check_estatico() -> bool:
     """Checagens baratas de contrato que nao dependem de execucao."""
     ok = True
-    texto = SRC.read_text(encoding="utf-8")
 
     # Criterio 12: nenhuma chamada delay( no codigo (comentarios nao contam).
     achados = []
-    for numero, linha in enumerate(texto.splitlines(), 1):
-        codigo = linha.split("//", 1)[0]
-        if re.search(r"\bdelay\s*\(", codigo):
-            achados.append(f"linha {numero}: {linha.strip()}")
+    for arquivo in (SRC, SONDA_SRC):
+        for numero, linha in enumerate(
+            arquivo.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            codigo = linha.split("//", 1)[0]
+            if re.search(r"\bdelay\s*\(", codigo):
+                achados.append(f"{arquivo.name} linha {numero}: {linha.strip()}")
     if achados:
         print("FALHOU sem delay(: " + "; ".join(achados))
         ok = False
@@ -266,8 +285,8 @@ def main() -> int:
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
-    if not SRC.exists():
-        print(f"ERRO: {SRC} nao existe")
+    if not SRC.exists() or not SONDA_SRC.exists():
+        print(f"ERRO: arquivo de firmware nao existe ({SRC} / {SONDA_SRC})")
         return 2
     if shutil.which("g++") is None:
         print("ERRO: g++ nao encontrado")
@@ -276,6 +295,7 @@ def main() -> int:
     print("== extraindo funcoes reais ==")
     try:
         gerar_headers(SRC.read_text(encoding="utf-8"))
+        gerar_sonda_inc()
     except RuntimeError as erro:
         print(f"ERRO: {erro}")
         return 2
