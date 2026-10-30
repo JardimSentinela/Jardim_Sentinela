@@ -4,9 +4,10 @@
   "editor": "wokwi",
   "parts": [
     { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
-    { "type": "wokwi-potentiometer", "id": "pot1", "top": -120, "left": 200, "attrs": {} },
-    { "type": "wokwi-potentiometer", "id": "pot2", "top": 0, "left": 200, "attrs": {} },
-    { "type": "wokwi-potentiometer", "id": "pot3", "top": 120, "left": 200, "attrs": {} }
+    { "type": "wokwi-potentiometer", "id": "pot1", "top": -180, "left": 200, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "pot2", "top": -60, "left": 200, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "pot3", "top": 60, "left": 200, "attrs": {} },
+    { "type": "wokwi-potentiometer", "id": "pot4", "top": 180, "left": 200, "attrs": {} }
   ],
   "connections": [
     [ "esp:TX0", "$serialMonitor:RX", "", [] ],
@@ -22,7 +23,11 @@
 
     [ "pot3:SIG", "esp:D34", "green", [] ],
     [ "pot3:VCC", "esp:D27", "red", [] ],
-    [ "pot3:GND", "esp:GND.1", "black", [] ]
+    [ "pot3:GND", "esp:GND.1", "black", [] ],
+
+    [ "pot4:SIG", "esp:D35", "blue", [] ],
+    [ "pot4:VCC", "esp:3V3", "red", [] ],
+    [ "pot4:GND", "esp:GND.1", "black", [] ]
   ],
   "dependencies": {}
 }

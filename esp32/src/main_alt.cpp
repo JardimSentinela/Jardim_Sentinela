@@ -11,6 +11,7 @@
 #include <WiFiClientSecure.h>
 #include <Preferences.h>
 #include "codec_quadro.h"     // quadro binario v1 (INC 6)
+#include "hw02_sonda.h"       // sonda de nivel HW-02 (continua)
 #if __has_include("secrets.h")
 #include "secrets.h"          // ignorado pelo git: URL, SSID e senha
 #else
@@ -26,6 +27,10 @@ static const char* JARDIM_ID = "jardim-centro-01";  // Conforme contrato de tele
 // Sensores resistivos T1592 em ordem CRESCENTE de altura (índice 0 = mais baixo).
 // Wokwi: 3 potenciômetros em GPIO32, GPIO33, GPIO34 com alimentação em GPIO25, GPIO26, GPIO27.
 constexpr uint8_t N_SENSORES = 3;
+
+// Sonda de nivel HW-02: potenciometro em GPIO35 (3V3/GND). O indice 3 vira
+// "sensor-04" no arquivo; o codec v1 aceita sensores de 0 a 30.
+constexpr uint8_t SENSOR_SONDA = 3;
 constexpr uint8_t PINO_LEITURA[N_SENSORES] = {32, 33, 34};
 constexpr uint8_t PINO_ENERGIA[N_SENSORES] = {25, 26, 27};
 constexpr float   ALTURA_CM[N_SENSORES]    = {5.0f, 10.0f, 15.0f};
@@ -443,6 +448,11 @@ void tarefaAmostragem(void*) {
     estado[i] = lerSensor(i) > (LIMIAR_MOLHA[i] + LIMIAR_SECA[i]) / 2;
   }
 
+  // Ultima leitura da sonda, usada no snapshot (heartbeat). Enquanto ela ainda
+  // nao tiver amostrado, o snapshot cai para a escada T1592.
+  float ultimoNivelSonda = 0.0f;
+  bool  temLeituraSonda  = false;
+
   // Primeira linha do arquivo: "boot" (seq 0), com o nível lido no boot e as
   // coordenadas configuradas. Fica na frente de qualquer evento ou snapshot.
   Evento b{REG_BOOT, 0, nivelDe(estado), 0, millis(), g_seq++, relogioValido()};
@@ -452,6 +462,27 @@ void tarefaAmostragem(void*) {
   TickType_t ultimo = xTaskGetTickCount();
 
   for (;;) {
+    // ===== HW-02 - SONDA DE NIVEL =====
+    // A sonda se auto-limita a 500 ms; esta task chama a cada 100 ms.
+    LeituraSonda sonda;
+    if (atualizarSonda(sonda)) {
+      ultimoNivelSonda = sonda.nivelCm;
+      temLeituraSonda  = true;
+
+      Serial.printf(
+          "[HW-02] ADC: %d | Nivel: %.2f cm | Taxa: %.2f cm/min | Mudou: %s\n",
+          sonda.adc, sonda.nivelCm, sonda.taxaCmMin,
+          sonda.mudou ? "SIM" : "NAO");
+
+      // Variacao >= 1 cm: registra como evento do sensor-04. A taxa ainda nao
+      // cabe no quadro v1; por enquanto fica so no log local.
+      if (sonda.mudou) {
+        Evento e{REG_EVENTO, SENSOR_SONDA, sonda.nivelCm, 0,
+                 millis(), g_seq++, relogioValido()};
+        enviar(e);
+      }
+    }
+
     for (uint8_t i = 0; i < N_SENSORES; i++) {
       uint16_t raw = lerSensor(i);
       bool cruzou = estado[i] ? (raw < LIMIAR_SECA[i]) : (raw > LIMIAR_MOLHA[i]);
@@ -486,7 +517,10 @@ void tarefaAmostragem(void*) {
       }
       // sensAtivo identifica o sensor molhado mais alto; no arquivo o snapshot
       // usa idSensor "jardim", então esse valor não é gravado.
-      Evento s{REG_SNAPSHOT, sensAtivo, nivelDe(estado), 0, millis(), g_seq++, relogioValido()};
+      // O nivel do heartbeat vem da sonda continua; sem leitura dela ainda,
+      // cai para a escada T1592.
+      float nivelSnap = temLeituraSonda ? ultimoNivelSonda : nivelDe(estado);
+      Evento s{REG_SNAPSHOT, sensAtivo, nivelSnap, 0, millis(), g_seq++, relogioValido()};
       enviar(s);
       proxSnap += PERIODO_SNAPSHOT_MS;
     }
@@ -1850,6 +1884,8 @@ void setup() {
   }
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
+
+  iniciarSonda();
 
   if (!LittleFS.begin(true)) Serial.println("ERRO: LittleFS");
 
