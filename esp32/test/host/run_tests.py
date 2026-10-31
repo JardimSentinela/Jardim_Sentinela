@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Testes automatizados de host do firmware do ESP32.
 
-Os testes compilam funcoes reais extraidas de src/main_alt.cpp e o
-src/hw02_sonda.cpp inteiro contra stubs de Arduino/LittleFS. Nao precisam de
-placa, Wi-Fi ou receptor HTTPS.
+Os testes compilam funcoes reais extraidas de src/modulos/*.cpp e o
+src/modulos/hw02_sonda.cpp inteiro contra stubs de Arduino/LittleFS. Nao
+precisam de placa, Wi-Fi ou receptor HTTPS.
 
 Uso:
     python3 test/host/run_tests.py
@@ -21,8 +21,16 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ESP32 = HERE.parents[1]
-SRC = ESP32 / "src" / "main_alt.cpp"
-SONDA_SRC = ESP32 / "src" / "hw02_sonda.cpp"
+SRC_DIR = ESP32 / "src"
+MODULES_DIR = SRC_DIR / "modulos"
+SRC = SRC_DIR / "main_alt.cpp"
+SONDA_SRC = MODULES_DIR / "hw02_sonda.cpp"
+CPP_SOURCES = sorted(MODULES_DIR.glob("*.cpp"))
+# O hw02_sonda.cpp e copiado inteiro em sonda.inc; nao entra na extracao por
+# funcao para nao duplicar simbolos.
+FIRMWARE_SOURCES = [p for p in CPP_SOURCES if p.name != SONDA_SRC.name]
+# A checagem estatica tambem olha o ponto de entrada.
+CHECK_SOURCES = [SRC] + CPP_SOURCES
 BUILD = HERE / ".build"
 
 # Funcoes extraidas do firmware, por grupo de teste. O extrator usa o corpo
@@ -152,15 +160,16 @@ def extract_function(text: str, name: str) -> str:
     raise RuntimeError(f"chaves nao fecharam: {name}")
 
 
-def gerar_headers(source: str) -> None:
+def gerar_headers(sources: list[Path]) -> None:
     BUILD.mkdir(parents=True, exist_ok=True)
+    source = "\n\n".join(p.read_text(encoding="utf-8") for p in sources)
     for grupo, nomes in GROUPS.items():
         trechos = []
         for nome in nomes:
             trechos.append(extract_function(source, nome))
         destino = BUILD / f"{grupo}.inc"
         destino.write_text(
-            f"// Gerado por run_tests.py a partir de src/main_alt.cpp\n\n"
+            "// Gerado por run_tests.py a partir de src/modulos/*.cpp\n\n"
             + "\n\n".join(trechos)
             + "\n",
             encoding="utf-8",
@@ -172,7 +181,7 @@ def gerar_sonda_inc() -> None:
     """Copia o hw02_sonda.cpp inteiro: ele tem constantes e estado de modulo."""
     destino = BUILD / "sonda.inc"
     destino.write_text(
-        "// Gerado por run_tests.py a partir de src/hw02_sonda.cpp\n\n"
+        "// Gerado por run_tests.py a partir de src/modulos/hw02_sonda.cpp\n\n"
         + SONDA_SRC.read_text(encoding="utf-8")
         + "\n",
         encoding="utf-8",
@@ -190,6 +199,8 @@ def compilar(nome: str, arquivo: str) -> Path:
         "-Wextra",
         "-I",
         str(ESP32 / "src"),
+        "-I",
+        str(MODULES_DIR),
         "-I",
         str(BUILD),
         "-I",
@@ -225,7 +236,7 @@ def check_estatico() -> bool:
 
     # Criterio 12: nenhuma chamada delay( no codigo (comentarios nao contam).
     achados = []
-    for arquivo in (SRC, SONDA_SRC):
+    for arquivo in CHECK_SOURCES:
         for numero, linha in enumerate(
             arquivo.read_text(encoding="utf-8").splitlines(), 1
         ):
@@ -285,8 +296,8 @@ def main() -> int:
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
-    if not SRC.exists() or not SONDA_SRC.exists():
-        print(f"ERRO: arquivo de firmware nao existe ({SRC} / {SONDA_SRC})")
+    if not SRC.exists() or not SONDA_SRC.exists() or not FIRMWARE_SOURCES:
+        print(f"ERRO: arquivos de firmware nao existem ({SRC} / {MODULES_DIR})")
         return 2
     if shutil.which("g++") is None:
         print("ERRO: g++ nao encontrado")
@@ -294,7 +305,7 @@ def main() -> int:
 
     print("== extraindo funcoes reais ==")
     try:
-        gerar_headers(SRC.read_text(encoding="utf-8"))
+        gerar_headers(FIRMWARE_SOURCES)
         gerar_sonda_inc()
     except RuntimeError as erro:
         print(f"ERRO: {erro}")

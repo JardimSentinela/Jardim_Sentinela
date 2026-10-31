@@ -1,8 +1,9 @@
 # Testes de host — sonda, envio e store-and-forward
 
 Testes automatizados, sem placa, Wi-Fi ou receptor HTTPS. Eles compilam
-**funções reais extraídas de `src/main_alt.cpp`** e o **`src/hw02_sonda.cpp`
-inteiro** contra stubs de Arduino, LittleFS e `time()`, e rodam em segundos.
+**funções reais extraídas de `src/modulos/*.cpp`** e o
+**`src/modulos/hw02_sonda.cpp` inteiro** contra stubs de Arduino, LittleFS e
+`time()`, e rodam em segundos.
 
 ## Como rodar
 
@@ -26,7 +27,7 @@ Requisitos: `g++` com C++17 e Python 3.9+. O runner gera os trechos em
 | `test_url.cpp` | Comando `'u'`: alternância da URL inválida e reset do backoff. |
 | `test_backoff.cpp` | Backoff 2/4/8/16/32/60 s, 429 30/60/120/240/300 s, Retry-After, 4xx (5 min), URL vazia, codec inválido e timeout. |
 | `test_sonda.cpp` | Sonda HW-02: janela de 500 ms, média de 10 leituras, conversão ADC → cm, `pronta` separado de `mudou` (variação ≥ 1 cm), taxa assinada e regressão de 10 min parado + 2 cm. Também registra a limitação atual de saturação (calibração nominal). |
-| `run_tests.py` (estático) | Nenhuma chamada `delay(` em `main_alt.cpp` nem em `hw02_sonda.cpp`; `secrets.h` ignorado e não versionado; `secrets.example.h` versionado. |
+| `run_tests.py` (estático) | Nenhuma chamada `delay(` em `src/main_alt.cpp` nem em `src/modulos/*.cpp`; `secrets.h` ignorado e não versionado; `secrets.example.h` versionado. |
 
 ## Limitações
 

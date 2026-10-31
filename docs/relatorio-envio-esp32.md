@@ -1,6 +1,6 @@
 # Relatório — camada de envio e store-and-forward (ESP32)
 
-> **Arquivo compilado:** `esp32/src/main_alt.cpp`
+> **Arquivo compilado:** `esp32/src/main_alt.cpp` (ponto de entrada) + módulos em `esp32/src/modulos/`
 > **Branch:** `feat/SCRUM-34-HW-03-Emular-LoRa-e-resiliência-de-conectividade`
 > **Build:** PlatformIO, env `esp32dev`, `-DSIMULATION`, LittleFS.
 > Este documento é atualizado a cada incremento.
@@ -1555,3 +1555,53 @@ Para não depender da cota do Webhook.site, use o receptor local em
 com `cloudflared`, o checklist do ensaio e a tabela de onde tirar cada número.
 
 > A suíte de testes está versionada em `esp32/test/host/`.
+
+---
+
+## Refatoração em módulos (pós-8C)
+
+O `main_alt.cpp` chegou a ~1.950 linhas e foi dividido em módulos por
+responsabilidade. **Não houve mudança de comportamento**: as funções foram
+movidas com o corpo intacto, os nomes públicos foram preservados e os únicos
+símbolos novos são três acessores de latência (`latenciaAmostras`,
+`latenciaDesconhecidas`, `latenciaForaBoot`) usados pelo comando `'i'`.
+
+`esp32/src/main_alt.cpp` agora contém apenas `setup()` e `loop()`, e todos os
+módulos ficam em `esp32/src/modulos/`. O `secrets.example.h` (e o `secrets.h`
+local, ignorado pelo git) continua em `esp32/src/`.
+
+| Módulo | Responsabilidade |
+|---|---|
+| `config.h` | Constantes, pinos, limiares, timeouts, nomes dos campos JSON e include de `../secrets.h`/`../secrets.example.h`. |
+| `estado.h/.cpp` | Tipos compartilhados (`Evento`, `ContadoresEnvio`, enums) e globais mutáveis (fila, Wi-Fi, cursor, relógio, boot). |
+| `relogio.h/.cpp` | NTP sem bloqueio, fallback pelo header `Date`, timestamps e ISO-8601. |
+| `linha.h/.cpp` | Montagem da linha NDJSON (`tipo`, `idSensor`, `seq`, `bootId` etc.). |
+| `amostragem.h/.cpp` | Tarefa de amostragem dos T1592 e geração dos eventos da sonda HW-02. |
+| `hw02_sonda.h/.cpp` | Driver da sonda de nível HW-02 (ADC, filtro, taxa e detecção de mudança). |
+| `codec_quadro.h` | Codec binário do quadro no ar v1, compartilhado pelo firmware e pelo gateway. |
+| `armazenamento.h/.cpp` | Gravação no LittleFS, compactação, recuperação de cauda e limpeza da fila. |
+| `cursor.h/.cpp` | Cursor `(bootId, seq)` na NVS, leitura de linha e avanço do cursor. |
+| `resolvidos.h/.cpp` | Conjunto em RAM das confirmações fora de ordem. |
+| `latencia.h/.cpp` | Anel de latência criação→2xx, percentis e contadores auxiliares. |
+| `rede.h/.cpp` | Máquina de estados do Wi-Fi e `postarLinha` via HTTPS. |
+| `gateway.h/.cpp` | Parsing dos campos JSON, quadro do codec v1, JSON do gateway e autoteste `'t'`. |
+| `drenagem.h/.cpp` | Seleção do lote (âncora, boot, eventos, backfill), envio, backoff e comandos `'o'`/`'u'`/`'e'`. |
+| `diagnostico.h/.cpp` | Comando `'i'` e log do estado no boot. |
+
+Dependências: `config.h` e `estado.h` são a base; `resolvidos` quebra o ciclo
+entre `armazenamento` e `drenagem`; `latencia` expõe acessores em vez de
+globais. A extração dos testes de host passou a ler todos os
+`src/modulos/*.cpp` (exceto `hw02_sonda.cpp`, copiado inteiro em `sonda.inc`).
+
+**Evidência de host:** `cd esp32 && python3 test/host/run_tests.py` →
+`Resumo: 8/8 grupos OK`. A checagem estática de `delay(` agora varre todos os
+`.cpp`. Não foi possível rodar um build real do firmware neste ambiente
+(sem PlatformIO/Arduino core instalados). Como verificação extra, todos os
+`.cpp` passaram por `g++ -std=gnu++11 -Wall -Wextra -fsyntax-only` contra
+stubs de Arduino/LittleFS/WiFi/HTTPClient/Preferences, e a linkagem parcial
+(`ld -r`) não acusou símbolos duplicados.
+
+**Como estender:** novo comando serial → `main_alt.cpp` (dispatch) + módulo
+correspondente em `modulos/`; novo campo persistido →
+`modulos/estado.h`/`modulos/estado.cpp`; novo limiar ou nome de campo →
+`modulos/config.h`.
