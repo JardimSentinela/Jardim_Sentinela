@@ -1332,11 +1332,15 @@ TLS continua com `setInsecure()` no Wokwi, como registrado no INC 2.
 
 ### Protocolo de 20 min offline
 
-Pré-requisitos: receptor com 2xx disponível; monitor serial capturado em
-arquivo; acesso à exportação de requisições do receptor.
+Pré-requisitos: receptor com 2xx disponível (ou o receptor local em
+`esp32/test/receiver/`); monitor serial capturado em arquivo; acesso à
+exportação de requisições do receptor.
 
-1. **Reset limpo:** pressione `'L'`. Isso zera a fila, `descartados`,
-   `perdidosNaoConfirmados` e a medição de latência.
+1. **Reset limpo:** pressione `'L'` e reinicie o ESP32. O `'L'` apaga a fila e
+   zera `descartados`, `perdidosNaoConfirmados` e a medição de latência; o reset
+   gera um boot novo com `seq 0` e zera os demais contadores. Sem o reset, a
+   linha de boot some e o `seq` continua de onde parou, deslocando a equação
+   `gerados = seq_max + 1`.
 2. Espere a linha de boot e o relógio válido (`HORA: fonte=ntp` ou `http`).
    No `'i'`, confirme `urlTeste: normal` e `offline: nao`; se necessário,
    pressione `'u'`/`'o'` para voltar ao modo normal. Anote `t0` e o primeiro
@@ -1545,4 +1549,9 @@ esperar 20 min. Falta apenas executar o protocolo de 20 min com um receptor 2xx
 e colar os números na tabela acima; se você rodar, posso conferir a
 contabilidade e fechar o relatório final.
 
-> A suíte de testes está no working tree; sem commit, merge ou push nesta etapa.
+Para não depender da cota do Webhook.site, use o receptor local em
+`esp32/test/receiver/`. Ele responde 200, grava as requisições e calcula
+únicos/duplicatas por `(bootId, seq)`; o README da pasta traz o passo a passo
+com `cloudflared`, o checklist do ensaio e a tabela de onde tirar cada número.
+
+> A suíte de testes está versionada em `esp32/test/host/`.
