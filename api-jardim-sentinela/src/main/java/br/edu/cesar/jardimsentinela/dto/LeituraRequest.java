@@ -7,9 +7,19 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
 
 public record LeituraRequest(
-        @NotBlank String jardimId,
-        @NotBlank String sensorId,
-        @NotNull @PositiveOrZero Double nivelCm,
-        @NotNull @Min(0) @Max(100) Integer bateria
+        @NotBlank(message = "não pode ser vazio")
+        String jardimId,
+
+        @NotBlank(message = "não pode ser vazio")
+        String sensorId,
+
+        @NotNull(message = "é obrigatório")
+        @PositiveOrZero(message = "não pode ser negativo")
+        Double nivelCm,
+
+        @NotNull(message = "é obrigatório")
+        @Min(value = 0, message = "deve estar entre 0 e 100")
+        @Max(value = 100, message = "deve estar entre 0 e 100")
+        Integer bateria
 ) {
 }
