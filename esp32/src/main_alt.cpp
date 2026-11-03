@@ -31,6 +31,8 @@ void setup() {
 
   iniciarSonda();
 
+  iniciarSonda();
+
   if (!LittleFS.begin(true)) Serial.println("ERRO: LittleFS");
 
   // Identificador deste boot (8 hex) e contador de registros zerado: o receptor
