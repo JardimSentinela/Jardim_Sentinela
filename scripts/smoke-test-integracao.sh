@@ -73,8 +73,9 @@ echo "$resposta" | grep -q '"totalLeituras":2' && ok "Total de leituras correto 
 # 6. Histórico mais recente primeiro
 resposta=$(curl -s "$BASE/api/jardins/$JARDIM/leituras")
 echo "   GET /api/jardins/$JARDIM/leituras -> $resposta"
-echo "$resposta" | head -c 40 | grep -q '"nivelCm":20.0' && ok "Histórico ordenado (mais recente primeiro)" \
-  || falha "Histórico não está ordenado como esperado"
+primeiro_objeto=$(echo "$resposta" | grep -o '{[^}]*}' | head -1)
+echo "$primeiro_objeto" | grep -q '"nivelCm":20.0' && ok "Histórico ordenado (mais recente primeiro)" \
+  || falha "Histórico não está ordenado como esperado (primeiro objeto: $primeiro_objeto)"
 
 # 7. Payload inválido
 status=$(curl -s -o /tmp/smoke_invalido.json -w '%{http_code}' -X POST "$BASE/api/leituras" \

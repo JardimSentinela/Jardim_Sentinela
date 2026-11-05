@@ -34,11 +34,11 @@ ciclo: rodar `./mvnw test` só com o teste (vê falhar), depois aplicar o códig
   a API não manda nenhum cabeçalho `Access-Control-*`, então as duas
   asserções de `header().exists(...)` devem falhar.
 
-**[Dado a verificar]** Não rodei nenhum dos dois — não consegui compilar no
-ambiente onde preparei isso. As asserções de `WebConfigCorsTests` foram
-escritas fracas de propósito (checam só a presença do cabeçalho, não o valor
-exato), porque não tenho como confirmar o formato exato que o Spring
-Framework 7 (base do Boot 4.1.1) devolve.
+**Atualização:** Já rodei. Os 12 testes automatizados (`LeituraIngestaoTests`,
+`WebConfigCorsTests`) passam (BUILD SUCCESS). O smoke test ponta a ponta
+também rodou contra a API real; 1 checagem falhou por bug no próprio script
+(comparação truncada contra JSON com ordem de campo alfabética), corrigido
+nesta mesma entrega — não era um problema na API.
 
 ## 1. Teste ponta a ponta parcial
 
@@ -53,6 +53,9 @@ cd api-jardim-sentinela
 ./mvnw spring-boot:run &                  # sobe a API
 ../scripts/smoke-test-integracao.sh    # roda o smoke test
 ```
+
+**Atualização:** Rodado contra a API real (H2 local), 9 etapas, todas
+passando após a correção do script (ver seção 0).
 
 ## 2. Correções de contrato
 
