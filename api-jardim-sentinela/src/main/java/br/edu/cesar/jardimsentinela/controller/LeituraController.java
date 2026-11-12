@@ -33,10 +33,11 @@ public class LeituraController {
     @PostMapping("/api/leituras")
     public ResponseEntity<Leitura> receberLeitura(@Valid @RequestBody LeituraRequest leitura) {
         Leitura salva = leituraRepository.save(new Leitura(
-                leitura.jardimId(),
-                leitura.sensorId(),
-                leitura.nivelCm(),
+                leitura.idJardim(),
+                leitura.idSensor(),
+                leitura.nivelAgua(),
                 leitura.bateria(),
+                leitura.timestamp(),
                 Instant.now()));
         return ResponseEntity.created(URI.create("/api/leituras/" + salva.getId())).body(salva);
     }

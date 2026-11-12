@@ -34,7 +34,8 @@ class JardimControllerTests {
         mvc.perform(post("/api/leituras")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"jardimId":"%s","sensorId":"S-%s","nivelCm":%s,"bateria":%d}
+                        {"idJardim":"%s","idSensor":"S-%s","nivelAgua":%s,
+                         "bateria":%d,"timestamp":"2026-11-12T12:00:00Z"}
                         """.formatted(jardimId, jardimId, nivelCm, bateria)))
                 .andExpect(status().isCreated());
     }
