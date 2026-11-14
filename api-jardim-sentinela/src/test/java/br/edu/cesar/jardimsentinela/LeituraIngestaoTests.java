@@ -51,24 +51,24 @@ class LeituraIngestaoTests {
 
     @Test
     void aceitaVocabularioDoFirmwareNoMesmoEndpoint() throws Exception {
-        // Exemplo real da linha gravada por esp32/src/main_alt.cpp (persistir(), linha ~179)
-        // na develop atual.
+        // Mesmo formato da linha gravada por esp32/src/main_alt.cpp (persistir()), com os ids no
+        // padrão do dicionário (J01/S02). O firmware ainda emite jardim-centro-01 (legado a migrar).
         mvc.perform(post("/api/leituras")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"idJardim":"jardim-centro-01","idSensor":"sensor-02",
+                        {"idJardim":"J01","idSensor":"S02",
                          "nivelAgua":10.0,"bateria":100,"timestamp":"2026-10-15T00:00:01Z"}
                         """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.jardimId").value("jardim-centro-01"))
-                .andExpect(jsonPath("$.sensorId").value("sensor-02"))
+                .andExpect(jsonPath("$.jardimId").value("J01"))
+                .andExpect(jsonPath("$.sensorId").value("S02"))
                 .andExpect(jsonPath("$.nivelCm").value(10.0));
     }
 
     @Test
     void reenvioComMesmoJardimSensorETimestampNaoDuplicaLeitura() throws Exception {
         String payload = """
-                {"idJardim":"jardim-centro-01","idSensor":"sensor-02","nivelAgua":10.0,
+                {"idJardim":"J01","idSensor":"S02","nivelAgua":10.0,
                  "bateria":100,"timestamp":"2026-10-15T00:00:01Z"}
                 """;
 
@@ -78,9 +78,9 @@ class LeituraIngestaoTests {
         // Mesma leitura chega de novo (retransmissão típica de enlace instável/offline).
         mvc.perform(post("/api/leituras").contentType(MediaType.APPLICATION_JSON).content(payload))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.jardimId").value("jardim-centro-01"));
+                .andExpect(jsonPath("$.jardimId").value("J01"));
 
-        mvc.perform(get("/api/jardins/jardim-centro-01"))
+        mvc.perform(get("/api/jardins/J01"))
                 .andExpect(jsonPath("$.totalLeituras").value(1));
     }
 

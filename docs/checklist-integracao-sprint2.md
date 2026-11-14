@@ -81,7 +81,7 @@ de `persistir()` no firmware), com os dois vocabulários, estão em
 | Origem | Exemplo | Endpoint | Resultado |
 |---|---|---|---|
 | Simulador | `{"jardimId":"J01","sensorId":"S01","nivelCm":18.5,"bateria":97}` | `POST /api/leituras` | 201 |
-| Firmware (`main_alt.cpp`) | `{"idJardim":"jardim-centro-01","idSensor":"sensor-02","nivelAgua":10.0,"bateria":100,"timestamp":"2026-10-15T00:00:01Z"}` | `POST /api/leituras` | 201 |
+| Firmware (formato de `main_alt.cpp`, ids no padrão novo) | `{"idJardim":"J01","idSensor":"S02","nivelAgua":10.0,"bateria":100,"timestamp":"2026-10-15T00:00:01Z"}` | `POST /api/leituras` | 201 |
 | Qualquer um, campo faltando | `{"sensorId":"S01","nivelCm":1,"bateria":1}` | `POST /api/leituras` | 400, `PAYLOAD_INVALIDO` |
 
 ## 4. Testar consumo inicial pelo código gerado
