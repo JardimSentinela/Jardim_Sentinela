@@ -5,6 +5,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Instant;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,12 +32,17 @@ class JardimControllerTests {
         repository.deleteAll();
     }
 
+    private int sequencia;
+
+    /** Cada envio usa um timestamp distinto: o mesmo jardim+sensor+timestamp é tratado como reenvio. */
     private void enviar(String jardimId, double nivelCm, int bateria) throws Exception {
+        String timestamp = Instant.parse("2026-11-12T12:00:00Z").plusSeconds(sequencia++).toString();
         mvc.perform(post("/api/leituras")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"jardimId":"%s","sensorId":"S-%s","nivelCm":%s,"bateria":%d}
-                        """.formatted(jardimId, jardimId, nivelCm, bateria)))
+                        {"idJardim":"%s","idSensor":"S-%s","nivelAgua":%s,
+                         "bateria":%d,"timestamp":"%s"}
+                        """.formatted(jardimId, jardimId, nivelCm, bateria, timestamp)))
                 .andExpect(status().isCreated());
     }
 

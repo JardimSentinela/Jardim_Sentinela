@@ -4,6 +4,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
@@ -14,6 +16,11 @@ import java.util.concurrent.TimeUnit;
 /**
  * Simula a rede Sentinela: cada jardim é um dispositivo independente, com seu próprio
  * sensor, frequência de envio e comportamento do nível de água.
+ *
+ * O JSON enviado usa o mesmo contrato do firmware (docs/contrato-final-telemetria.md):
+ * {@code idJardim}, {@code idSensor}, {@code nivelAgua}, {@code bateria} e
+ * {@code timestamp}. Assim, Wokwi e simulador são processados pelo mesmo endpoint,
+ * sem nenhum tratamento especial por origem.
  *
  * Uso: GeradorDadosJardim [urlApi] [duracaoSegundos]
  * Padrão: http://localhost:8080/api/leituras por 60 segundos.
@@ -47,13 +54,19 @@ public class GeradorDadosJardim {
         }
 
         String proximaLeituraJson() {
+            return proximaLeituraJson(Instant.now().truncatedTo(ChronoUnit.SECONDS));
+        }
+
+        /** Sobrecarga usada nos testes para fixar o timestamp do contrato. */
+        String proximaLeituraJson(Instant timestamp) {
             double variacao = tendenciaCm + (random.nextDouble() * 2 - 1) * passoMaximoCm;
             nivelCm = Math.max(0, Math.min(NIVEL_MAXIMO_CM, nivelCm + variacao));
             bateria = Math.max(0, bateria - 0.2);
 
             return String.format(Locale.ROOT,
-                    "{\"jardimId\":\"%s\",\"sensorId\":\"%s\",\"nivelCm\":%.1f,\"bateria\":%d}",
-                    jardimId, sensorId, nivelCm, (int) Math.round(bateria));
+                    "{\"idJardim\":\"%s\",\"idSensor\":\"%s\",\"nivelAgua\":%.1f,"
+                            + "\"bateria\":%d,\"timestamp\":\"%s\"}",
+                    jardimId, sensorId, nivelCm, (int) Math.round(bateria), timestamp);
         }
     }
 
