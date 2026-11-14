@@ -2,7 +2,8 @@
 
 > **Card:** [SCRUM-19] [SW-01] Definir contrato de telemetria
 > **Pai:** Estruturar a frente de Arquitetura
-> **Sprint:** SCRUM Sprint 1
+> **Sprint:** SCRUM Sprint 1 (revisado na Sprint 2: SCRUM-43 [SW-09], SCRUM-44 [SW-10])
+> **Última revisão:** 2026-11-14
 
 ## Por que este documento existe
 
@@ -19,52 +20,101 @@ Se cada ponta inventar seus próprios nomes de campo (`nivelAgua` num lado,
 silêncio. Este documento é a **fonte de verdade** para o *formato do dado*:
 se algo aqui mudar, muda em todos os lugares ao mesmo tempo.
 
-> **Há duas coisas diferentes neste documento.** A seção "Formato" descreve o **payload
-> da API** (a proposta do card SCRUM-19). A seção "Formato gravado pelo firmware"
-> descreve o **que o ESP32 realmente grava no arquivo `/fila.ndjson`**. As duas
-> ainda não são o mesmo formato — e a divergência está **registrada e aberta**,
-> não resolvida (ver "Decisões em aberto").
+> **Há duas coisas diferentes neste documento.** A seção 1 descreve o **payload
+> da API** (`POST /api/leituras`, implementado). A seção 2 descreve o **que o
+> ESP32 grava no arquivo `/fila.ndjson`**. As duas são formatos diferentes: o
+> arquivo do firmware tem campos extras que a API recebe e ignora (ver 3.3).
+> O estado das decisões está na seção 3; **o que está marcado como pendente
+> ainda não é comportamento da API**.
 
 ---
 
-## 1. Formato (payload da API — proposta do card SCRUM-19)
+## 1. Payload da API — `POST /api/leituras`
 
-Um objeto JSON por leitura, enviado no corpo da requisição `POST /api/leituras`.
+> **Estado:** implementado em `develop` + PR #15 (ponte de compatibilidade,
+> SCRUM-43). Fonte no código: `LeituraRequest`.
 
-### Campos
+Um objeto JSON por leitura. Firmware e simulador enviam o **mesmo payload** ao
+**mesmo endpoint**, sem tratamento por origem.
 
-| Campo       | Tipo               | Unidade          | Obrigatório | Descrição                                      | Exemplo                 |
-| ----------- | ------------------ | ---------------- | ----------- | ---------------------------------------------- | ----------------------- |
-| `idJardim`  | string             | —                | sim         | Identificador do jardim                        | `"jardim-centro-01"`    |
-| `idSensor`  | string             | —                | sim         | Identificador do sensor que gerou a leitura    | `"sensor-01"`           |
-| `nivelAgua` | number (decimal)   | centímetros       | sim         | Nível de água medido                           | `42.5`                  |
-| `bateria`   | number (inteiro)   | escala 0-100 (%) | sim         | Carga da bateria da unidade de campo           | `87`                    |
-| `timestamp` | string             | ISO-8601 em UTC  | sim         | Data/hora da leitura                           | `"2026-10-15T02:25:28Z"` |
+### 1.1 Campos da requisição
 
-### Exemplo aceito
+| Campo (firmware e simulador) | Alias também aceito | Tipo             | Unidade          | Obrigatório | Regra de validação        | Exemplo                  |
+| ---------------------------- | ------------------- | ---------------- | ---------------- | ----------- | ------------------------- | ------------------------ |
+| `idJardim`                   | `jardimId`          | string           | —                | sim         | não vazio                 | `"J01"`                  |
+| `idSensor`                   | `sensorId`          | string           | —                | sim         | não vazio                 | `"S01"`                  |
+| `nivelAgua`                  | `nivelCm`           | number (decimal) | centímetros      | sim         | não negativo              | `42.5`                   |
+| `bateria`                    | —                   | number (inteiro) | escala 0-100 (%) | sim         | inteiro entre 0 e 100     | `87`                     |
+| `timestamp`                  | —                   | string           | ISO-8601 em UTC  | **não**     | data/hora ISO-8601 válida | `"2026-11-12T12:00:00Z"` |
+
+- Campos desconhecidos (`tipo`, `seq`, `bootId`, `deltaTMs`, `horaSincronizada`,
+  `lat`, `lon`) são **aceitos e descartados** (ver 3.3).
+- O **nome oficial** do campo (`idJardim` × `jardimId`, etc.) não está fechado
+  (ver 3.1). Enquanto isso, os dois nomes valem.
+
+### 1.2 Exemplo aceito
 
 ```json
 {
-  "idJardim": "jardim-centro-01",
-  "idSensor": "sensor-01",
+  "idJardim": "J01",
+  "idSensor": "S01",
   "nivelAgua": 42.5,
   "bateria": 87,
-  "timestamp": "2026-10-15T02:25:28Z"
+  "timestamp": "2026-11-12T12:00:00Z"
 }
 ```
 
-### Regras de validação (base para o SCRUM-22)
+### 1.3 Resposta e campos de saída
 
-| Campo       | Regra                                                                 |
-| ----------- | --------------------------------------------------------------------- |
-| `idJardim`  | não vazio                                                             |
-| `idSensor`  | não vazio                                                             |
-| `nivelAgua` | número, não negativo                                                  |
-| `bateria`   | inteiro entre 0 e 100                                                 |
-| `timestamp` | data/hora válida em ISO-8601                                          |
+A resposta **não usa os nomes da requisição**: usa os nomes internos da API.
 
-Campos ausentes ou fora dessas regras caracterizam **payload inválido** e devem
-ser rejeitados (ver critério de aceite do SCRUM-22).
+| Campo de saída         | Tipo            | Descrição                                                              |
+| ---------------------- | --------------- | ---------------------------------------------------------------------- |
+| `id`                   | number          | Identificador da linha no banco                                        |
+| `jardimId`             | string          | Mesmo valor de `idJardim`                                              |
+| `sensorId`             | string          | Mesmo valor de `idSensor`                                              |
+| `nivelCm`              | number          | Mesmo valor de `nivelAgua` (cm)                                        |
+| `bateria`              | number          | 0-100                                                                  |
+| `recebidoEm`           | string ISO-8601 | Instante em que a **API** recebeu. Sempre preenchido pelo servidor     |
+| `timestampDispositivo` | string ISO-8601 | O `timestamp` enviado pelo **dispositivo**; `null` se não enviado      |
+
+> Na requisição o campo chama-se `timestamp`; na resposta, `timestampDispositivo`.
+> É **o mesmo dado**, com nomes diferentes por direção (decisão 2026-11-14).
+
+Endpoints de leitura (detalhes e exemplos em `docs/api-dashboard.md`):
+
+| Endpoint                                  | Retorna                                                              |
+| ----------------------------------------- | -------------------------------------------------------------------- |
+| `GET /api/jardins/{id}`                   | Última leitura + `ultimaLeituraEm` + `totalLeituras`; 404 se o jardim nunca enviou dado |
+| `GET /api/jardins/{id}/leituras?limite=N` | Histórico, mais recente primeiro; `limite` padrão 100, máximo 1000   |
+
+### 1.4 Idempotência (reenvio)
+
+Se o payload traz `timestamp`, a mesma combinação **`idJardim` + `idSensor` +
+`timestamp`** é tratada como o **mesmo evento**: o reenvio devolve **200** com a
+leitura já existente e **não duplica**. A primeira gravação devolve **201**.
+Sem `timestamp`, não há como detectar duplicata: cada envio grava uma leitura nova.
+
+### 1.5 Erros
+
+| Situação                                | HTTP | Código (`erro`)    |
+| --------------------------------------- | ---- | ------------------ |
+| Campo ausente ou fora das regras de 1.1 | 400  | `PAYLOAD_INVALIDO` |
+| Corpo não é JSON válido, ou tipo errado | 400  | `CORPO_ILEGIVEL`   |
+| Jardim sem nenhuma leitura (`GET`)      | 404  | corpo vazio        |
+
+Formato do corpo de erro 400: `status`, `erro`, `mensagem`, `campos`
+(lista de `{campo, mensagem}`) e `momento`.
+
+### 1.6 Formato dos ids
+
+**Padrão: `J01`, `J02`… para jardins (`^J\d{2}$`) e `S01`, `S02`… para sensores
+(`^S\d{2}$`)**, mais o valor reservado `idSensor: "jardim"` para a unidade inteira
+(snapshots e `boot`). Detalhes em `docs/dicionario-de-dados.md`. A API **não valida**
+esse formato hoje (só exige não vazio): a validação será ligada **depois** que o
+firmware migrar, para não rejeitá-lo. Os exemplos legados `jardim-centro-01` /
+`sensor-01` ainda existem na configuração do firmware (`esp32/`) e na seção 2
+abaixo — são **legado a migrar**, não padrão.
 
 ---
 
@@ -162,58 +212,85 @@ Consequências para quem lê:
 
 ---
 
-## 3. Decisões em aberto (NÃO resolvidas por este documento)
+## 3. Decisões
 
-As duas divergências abaixo **permanecem abertas**. A alteração do firmware e do
-formato do arquivo **não as resolveu** — e não deve ser lida como se tivesse.
+### 3.0 Registro de decisões
 
-### 3.1 Divergência de **nomes** entre o firmware e a API
+| Data       | Decisão                                                                                       | Estado                         |
+| ---------- | --------------------------------------------------------------------------------------------- | ------------------------------ |
+| 2026-11-14 | `timestamp` é o nome na requisição; `timestampDispositivo` é o nome na resposta/banco         | decidido (a comunicar ao time) |
+| 2026-11-14 | `timestamp` é **opcional** (mantém o comportamento da PR #15)                                 | decidido (a comunicar ao time) |
+| 2026-11-14 | Ids no padrão `J01` / `S01`                                                                   | decidido (a comunicar ao time) |
+| 2026-11-14 | Medição = `nivelAgua` em cm, por ora                                                          | decidido (a comunicar ao time) |
+| 2026-11-14 | Nome oficial de id/sensor/nível: **manter a ponte** (dois nomes aceitos na requisição) e reavaliar depois da Sprint 3 (ver 3.1) | decidido (a comunicar ao time) |
+| 2026-11-14 | Histórico e estado atual ordenam por `timestampDispositivo`, com `recebidoEm` quando for nulo (opção B, ver 3.4) | decidido; **implementação pendente** |
+| 2026-11-14 | Formato do id definido (`J01`, `S01`, `jardim`); **validação na API só depois** da migração do firmware (ver 1.6) | decidido; **implementação pendente** |
+| 2026-11-14 | Em payloads novos de requisição, usar `idJardim`/`idSensor`/`nivelAgua`/`timestamp` (ver dicionário, regra 4) | decidido (a comunicar ao time) |
 
-| Ponto        | Firmware (arquivo)          | API (DTO `LeituraRequest`) | Situação                      |
-| ------------ | --------------------------- | -------------------------- | ----------------------------- |
-| id do jardim | `idJardim`                  | `jardimId`                 | **ABERTO** — nomes divergentes |
-| id do sensor | `idSensor`                  | `sensorId`                 | **ABERTO** — nomes divergentes |
-| medição      | `nivelAgua` (número, cm)    | `nivelCm` (número, cm)     | **ABERTO** — nomes divergentes |
-| hora         | `timestamp` (ISO-8601 UTC)  | não existe no DTO          | **ABERTO** — a API usa `Instant.now()` (hora do servidor) |
-| bateria      | `bateria`                   | `bateria`                  | coincide no nome; no firmware é um valor **constante** |
+### 3.1 Nomes de campo: firmware × nome interno da API — ponte mantida por ora
 
-**Consequência prática hoje:** o payload que o firmware grava **não é aceito** pela
-API atual (400 Bad Request), porque `jardimId`, `sensorId` e `nivelCm` não são
-recebidos. Alinhar os nomes é uma decisão **da equipe**, não deste trabalho.
+O firmware e o simulador enviam `idJardim`, `idSensor`, `nivelAgua`. A API
+guarda e responde `jardimId`, `sensorId`, `nivelCm`. Desde a PR #15, a API
+aceita **os dois nomes na requisição** (`@JsonAlias` em `LeituraRequest`), então
+**o payload do firmware é aceito** (a versão anterior deste documento dizia o
+contrário). Isso foi uma ponte pragmática para fechar o SW-09; **nenhum nome
+venceu**, e a decisão é manter a ponte e reavaliar depois da Sprint 3.
+Consolidar em um só é uma refatoração de renomear. Até lá, quem
+consome a **resposta** (dashboard) deve usar os nomes internos (1.3).
 
-### 3.2 Divergência conceitual: **nível × estado**
+### 3.2 Nível × estado — nível adotado, por ora
 
-`nivelAgua` (altura em centímetros do nível mais alto molhado) e um booleano
-`molhado` (seco/molhado por sensor) **não são o mesmo dado com nomes diferentes**:
-são informações distintas. Escolher um lado significa descartar o outro, e isso
-afeta o que o firmware precisa medir.
+`nivelAgua` (altura em cm do nível mais alto molhado) e um booleano `molhado`
+são informações distintas. **O firmware atual registra `nivelAgua`** (cm), e a
+decisão é manter assim por ora. Registrar também o estado por sensor continua
+**em aberto**. O significado físico da medição (como a sonda calcula o cm) deve
+ser **confirmado com o time de hardware**.
 
-**O firmware atual registra `nivelAgua`** (valor em cm). A decisão de registrar
-também o estado booleano por sensor continua **ABERTA**.
+### 3.3 Campos do firmware que a API ignora
 
-### 3.3 Consequência no lado da API (para quando for alinhar)
+`tipo`, `seq`, `bootId`, `deltaTMs`, `horaSincronizada`, `lat` e `lon` são
+desconhecidos para o DTO e **ignorados em silêncio** (o Jackson 3 do Spring
+Boot 4 desliga `FAIL_ON_UNKNOWN_PROPERTIES` por padrão): o dado é aceito e
+descartado. `bootId`/`seq` agora existem em `develop` (a PR #14 foi mergeada).
+Falta decidir se a API passa a **usar** esses campos para:
 
-Os campos novos do firmware (`tipo`, `seq`, `bootId`, `deltaTMs`,
-`horaSincronizada`, `lat`, `lon`) são **desconhecidos** para o DTO da API atual,
-que os **ignora em silêncio** (o Jackson 3 do Spring Boot 4 desliga
-`FAIL_ON_UNKNOWN_PROPERTIES` por padrão). Ou seja: mandar `tipo`/`seq`/`bootId`
-hoje **não dá erro** — o dado é aceito e descartado.
+- detectar **perda** (buraco em `seq`) e **retransmissão** (mesmo `bootId` e
+  `seq`) — mais robusto que o `timestamp`, que depende do relógio do ESP32;
+- distinguir `evento`, `snapshot` e `boot`;
+- confiar no `timestamp` do dispositivo só quando `horaSincronizada` for `true`.
 
-Quando a equipe alinhar os nomes, vale decidir se a API passa a **usar**
-`seq` + `bootId` para:
+Hoje a idempotência usa `idJardim` + `idSensor` + `timestamp` (1.4).
 
-- detectar **perda** (buraco na sequência) e **retransmissão** (mesmo `seq` e
-  mesmo `bootId` já recebidos) — hoje a API não tem proteção contra duplicatas;
-- distinguir **evento**, **snapshot** e **boot**;
-- confiar no `timestamp` do dispositivo apenas quando `horaSincronizada` for
-  `true`.
+### 3.4 Qual hora manda — decidido: opção B (implementação pendente)
+
+Cada leitura tem duas horas: `timestampDispositivo` (quando o sensor mediu) e
+`recebidoEm` (quando a API recebeu). **Hoje o histórico e o "estado atual"
+ordenam por `recebidoEm`.** Com o dispositivo offline, o firmware reenvia a fila
+de uma vez; segundo os comentários de `esp32/src/modulos/drenagem.cpp`, a
+drenagem envia o snapshot mais recente (âncora) e depois os eventos mais antigos.
+Nesse caso:
+
+- no gráfico, leituras de horas diferentes ficam coladas no instante do reenvio;
+- o "estado atual" pode mostrar uma leitura **antiga** se ela chegar por último.
+
+| Opção | Ordenação                                                        | Risco                                              |
+| ----- | ---------------------------------------------------------------- | -------------------------------------------------- |
+| A     | `recebidoEm` (como hoje)                                         | Errada após reconexão                              |
+| B     | `timestampDispositivo`, com `recebidoEm` quando for nulo         | Relógio do dispositivo errado (`horaSincronizada:false` hoje usa hora estimada) |
+| C     | A API devolve as duas; o dashboard escolhe                       | Empurra a decisão para o front                     |
+
+**Decisão (2026-11-14): opção B.** Histórico e "estado atual" passam a ordenar
+por `timestampDispositivo`, usando `recebidoEm` quando ele for nulo. **Isso ainda
+não está implementado:** hoje a API ordena por `recebidoEm`. A mudança altera o
+comportamento do SW-06/SW-07 e deve começar por teste. Em aberto: tratar
+`horaSincronizada:false` (hora estimada) como hora não confiável.
 
 ---
 
 ## 4. Observações gerais
 
-- **Unidade do nível:** adotada em centímetros. O nome do campo (`nivelAgua`)
-  não carrega a unidade; ela está documentada aqui.
+- **Unidade do nível:** centímetros. O nome do campo (`nivelAgua`) não carrega a
+  unidade; ela está documentada aqui.
 - **Formato do arquivo ≠ formato do rádio.** O formato do `/fila.ndjson` é o
   **formato de armazenamento local** (store-and-forward), pensado para ser
   reescrito, truncado e recuperado após falta de energia. Ele **não é
@@ -224,3 +301,5 @@ Quando a equipe alinhar os nomes, vale decidir se a API passa a **usar**
 - **Resolução do `timestamp`:** 1 segundo (sem milissegundos), ISO-8601 UTC.
 - **`bateria`:** hoje é constante no firmware; quando houver sensor, o valor
   passará a ser medido.
+- **`timestamp` ausente:** a API não rejeita; `timestampDispositivo` fica `null`
+  e vale só o `recebidoEm`.

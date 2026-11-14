@@ -1,5 +1,6 @@
 package br.edu.cesar.jardimsentinela.repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,4 +18,13 @@ public interface LeituraRepository extends JpaRepository<Leitura, Long> {
     boolean existsByJardimId(String jardimId);
 
     long countByJardimId(String jardimId);
+
+    /**
+     * [SCRUM-44][SW-10] Base da idempotência básica: mesmo jardim, mesmo sensor e mesmo
+     * timestamp de dispositivo = o mesmo evento retransmitido. Só se aplica quando a
+     * origem manda timestamp (hoje, o firmware manda; o simulador não manda e cai fora
+     * desta checagem, sem precisar de código especial por origem no controller).
+     */
+    Optional<Leitura> findByJardimIdAndSensorIdAndTimestampDispositivo(
+            String jardimId, String sensorId, Instant timestampDispositivo);
 }
