@@ -65,7 +65,7 @@ class TelemetriaIntercambiavelTests {
     void fontesAlternadasSaoProcessadasPeloMesmoEndpoint() throws Exception {
         enviar(payloadWokwi("jardim-centro-01", "sensor-01", 5.0, 100,
                 "2026-11-12T12:00:00Z", 2, "simulacao"))
-                .andExpect(jsonPath("$.medidoEm").value("2026-11-12T12:00:00Z"));
+                .andExpect(jsonPath("$.timestampDispositivo").value("2026-11-12T12:00:00Z"));
 
         enviar(payloadSimulador("jardim-centro-01", "sensor-01", 10.0, 99,
                 "2026-11-12T12:00:01Z"));
@@ -86,9 +86,9 @@ class TelemetriaIntercambiavelTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(4))
                 .andExpect(jsonPath("$[0].nivelCm").value(0.0))
-                .andExpect(jsonPath("$[0].medidoEm").value("2026-11-12T12:00:03Z"))
+                .andExpect(jsonPath("$[0].timestampDispositivo").value("2026-11-12T12:00:03Z"))
                 .andExpect(jsonPath("$[3].nivelCm").value(5.0))
-                .andExpect(jsonPath("$[3].medidoEm").value("2026-11-12T12:00:00Z"));
+                .andExpect(jsonPath("$[3].timestampDispositivo").value("2026-11-12T12:00:00Z"));
     }
 
     @Test
@@ -104,23 +104,27 @@ class TelemetriaIntercambiavelTests {
     }
 
     @Test
-    void payloadComNomesAntigosERejeitado() throws Exception {
+    void nomesAntigosDoSimuladorSaoAceitosPelaPonte() throws Exception {
+        // Ponte transitória (@JsonAlias): jardimId/sensorId/nivelCm continuam válidos.
         mvc.perform(post("/api/leituras")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"jardimId":"J01","sensorId":"S01","nivelCm":10.0,"bateria":90}
                         """))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isCreated());
     }
 
     @Test
-    void timestampEhObrigatorio() throws Exception {
-        mvc.perform(post("/api/leituras")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                        {"idJardim":"J01","idSensor":"S01","nivelAgua":10.0,"bateria":90}
-                        """))
-                .andExpect(status().isBadRequest());
+    void timestampEhOpcionalENaoAtivaIdempotencia() throws Exception {
+        String semTimestamp = """
+                {"idJardim":"J01","idSensor":"S01","nivelAgua":10.0,"bateria":90}
+                """;
+        enviar(semTimestamp);
+        enviar(semTimestamp);
+
+        mvc.perform(get("/api/jardins/J01"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalLeituras").value(2));
     }
 
     @Test
