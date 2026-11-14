@@ -2,3 +2,7 @@
 version = 1
 firmware = '.pio/build/esp32dev/firmware.merged.bin'
 elf = '.pio/build/esp32dev/firmware.elf'
+
+# Depuracao local: expoe o serial da simulacao em rfc2217://localhost:4000.
+# Exige reiniciar a simulacao para abrir a porta. Remova se nao for usar.
+rfc2217ServerPort = 4000

@@ -68,7 +68,15 @@ constexpr uint32_t PERIODO_SNAPSHOT_MS = 60000;
 // Rede e envio (INC 2). Timeouts em ms; o loop consulta o estado sem esperar.
 constexpr uint32_t WIFI_TIMEOUT_MS     = 15000;  // desiste de conectar sem travar
 constexpr uint32_t WIFI_RETENTATIVA_MS = 30000;  // espera para tentar de novo
+// No Wokwi o handshake TLS e mais lento que no hardware (CPU limitada e
+// gateway no meio); 8 s abortavam a conexao com mbedTLS -80 (CONN_RESET).
+// O HTTP local (host.wokwi.internal) nao sofre disso, mas o limite maior
+// tambem cobre quem validar por HTTPS.
+#ifdef SIMULATION
+constexpr uint32_t HTTP_TIMEOUT_MS     = 30000;  // conexao + resposta do POST
+#else
 constexpr uint32_t HTTP_TIMEOUT_MS     = 8000;   // conexao + resposta do POST
+#endif
 constexpr uint32_t NTP_TIMEOUT_MS      = 10000;  // espera maxima pelo NTP
 
 // URL do comando 'u' (INC 8C): dominio .invalid (RFC 2606) nao resolve, para
