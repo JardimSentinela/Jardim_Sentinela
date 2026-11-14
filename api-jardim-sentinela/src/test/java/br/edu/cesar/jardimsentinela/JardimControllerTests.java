@@ -55,8 +55,14 @@ class JardimControllerTests {
 
     @Test
     void jardimInexistenteRetorna404() throws Exception {
-        mvc.perform(get("/api/jardins/J99")).andExpect(status().isNotFound());
-        mvc.perform(get("/api/jardins/J99/leituras")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/jardins/J99"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.erro").value("JARDIM_NAO_ENCONTRADO"))
+                .andExpect(jsonPath("$.campos.length()").value(0));
+        mvc.perform(get("/api/jardins/J99/leituras"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.erro").value("JARDIM_NAO_ENCONTRADO"));
     }
 
     @Test

@@ -45,6 +45,16 @@ public class TratadorDeErros {
                 Instant.now()));
     }
 
+    @ExceptionHandler(JardimNaoEncontradoException.class)
+    public ResponseEntity<ErroResposta> jardimNaoEncontrado(JardimNaoEncontradoException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new ErroResposta(
+                HttpStatus.NOT_FOUND.value(),
+                "JARDIM_NAO_ENCONTRADO",
+                ex.getMessage(),
+                List.of(),
+                Instant.now()));
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErroResposta> corpoIlegivel(HttpMessageNotReadableException ex) {
         return ResponseEntity.badRequest().body(new ErroResposta(

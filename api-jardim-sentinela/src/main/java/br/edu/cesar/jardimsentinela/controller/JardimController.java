@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import br.edu.cesar.jardimsentinela.dto.JardimResponse;
 import br.edu.cesar.jardimsentinela.entity.Leitura;
+import br.edu.cesar.jardimsentinela.exception.JardimNaoEncontradoException;
 import br.edu.cesar.jardimsentinela.service.JardimService;
 
 @RestController
@@ -23,13 +24,15 @@ public class JardimController {
 
     @GetMapping("/api/jardins/{id}")
     public ResponseEntity<JardimResponse> buscarJardim(@PathVariable String id) {
-        return ResponseEntity.of(jardimService.buscarJardim(id));
+        return ResponseEntity.ok(jardimService.buscarJardim(id)
+                .orElseThrow(() -> new JardimNaoEncontradoException(id)));
     }
 
     @GetMapping("/api/jardins/{id}/leituras")
     public ResponseEntity<List<Leitura>> buscarHistorico(
             @PathVariable String id,
             @RequestParam(defaultValue = "" + JardimService.LIMITE_PADRAO) int limite) {
-        return ResponseEntity.of(jardimService.buscarHistorico(id, limite));
+        return ResponseEntity.ok(jardimService.buscarHistorico(id, limite)
+                .orElseThrow(() -> new JardimNaoEncontradoException(id)));
     }
 }
