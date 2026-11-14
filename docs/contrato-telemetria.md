@@ -101,10 +101,11 @@ Sem `timestamp`, não há como detectar duplicata: cada envio grava uma leitura 
 | --------------------------------------- | ---- | ------------------ |
 | Campo ausente ou fora das regras de 1.1 | 400  | `PAYLOAD_INVALIDO` |
 | Corpo não é JSON válido, ou tipo errado | 400  | `CORPO_ILEGIVEL`   |
-| Jardim sem nenhuma leitura (`GET`)      | 404  | corpo vazio        |
+| Jardim sem nenhuma leitura (`GET /api/jardins/{id}` e `/leituras`) | 404 | `JARDIM_NAO_ENCONTRADO` |
+| Leitura inexistente (`GET /api/leituras/{id}`) | 404 | corpo vazio |
 
-Formato do corpo de erro 400: `status`, `erro`, `mensagem`, `campos`
-(lista de `{campo, mensagem}`) e `momento`.
+Formato do corpo de erro (400 e 404 de jardim): `status`, `erro`, `mensagem`,
+`campos` (lista de `{campo, mensagem}`; vazia no 404) e `momento`.
 
 ### 1.6 Formato dos ids
 

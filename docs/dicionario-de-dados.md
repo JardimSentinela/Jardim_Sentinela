@@ -76,7 +76,8 @@ a de maior `timestampDispositivo`; quando ele for nulo, usa-se `recebidoEm`
 | ------------------ | ---- | ---------------------------------------------- |
 | `PAYLOAD_INVALIDO` | 400  | campo ausente ou fora da regra                 |
 | `CORPO_ILEGIVEL`   | 400  | JSON inválido ou tipo errado                   |
-| (corpo vazio)      | 404  | jardim sem nenhuma leitura                     |
+| `JARDIM_NAO_ENCONTRADO` | 404 | jardim sem nenhuma leitura (`GET /api/jardins/{id}` e `/leituras`) |
+| (corpo vazio)      | 404  | leitura inexistente (`GET /api/leituras/{id}`) |
 
 Status de criação: **201** na primeira gravação; **200** no reenvio do mesmo
 `idJardim` + `idSensor` + `timestamp` (idempotência).
