@@ -19,24 +19,32 @@ public class Leitura {
     private Double nivelCm;
     private Integer bateria;
 
-    /** Instante informado pelo dispositivo no campo `timestamp`. */
-    private Instant medidoEm;
-
-    /** Instante em que a API recebeu a leitura. */
+    /** Instante em que a API recebeu a requisição. Sempre preenchido pelo servidor. */
     private Instant recebidoEm;
+
+    /**
+     * [SCRUM-44][SW-10] Instante do evento no dispositivo, quando informado
+     * (ver LeituraRequest). Pode ser nulo — é a chave de idempotência básica
+     * junto com jardimId+sensorId.
+     */
+    private Instant timestampDispositivo;
 
     protected Leitura() {
         // exigido pelo JPA
     }
 
-    public Leitura(String jardimId, String sensorId, Double nivelCm, Integer bateria,
-                   Instant medidoEm, Instant recebidoEm) {
+    public Leitura(String jardimId, String sensorId, Double nivelCm, Integer bateria, Instant recebidoEm) {
+        this(jardimId, sensorId, nivelCm, bateria, recebidoEm, null);
+    }
+
+    public Leitura(String jardimId, String sensorId, Double nivelCm, Integer bateria, Instant recebidoEm,
+                    Instant timestampDispositivo) {
         this.jardimId = jardimId;
         this.sensorId = sensorId;
         this.nivelCm = nivelCm;
         this.bateria = bateria;
-        this.medidoEm = medidoEm;
         this.recebidoEm = recebidoEm;
+        this.timestampDispositivo = timestampDispositivo;
     }
 
     public Long getId() { return id; }
@@ -44,6 +52,6 @@ public class Leitura {
     public String getSensorId() { return sensorId; }
     public Double getNivelCm() { return nivelCm; }
     public Integer getBateria() { return bateria; }
-    public Instant getMedidoEm() { return medidoEm; }
     public Instant getRecebidoEm() { return recebidoEm; }
+    public Instant getTimestampDispositivo() { return timestampDispositivo; }
 }
