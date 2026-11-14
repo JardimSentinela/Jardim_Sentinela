@@ -70,15 +70,25 @@ int postarLinha(const char* linha) {
     return -2;
   }
 
-  WiFiClientSecure cliente;
-  // LIMITAÇÃO: o gateway do Wokwi não entrega a cadeia de certificados; a
-  // validação TLS fica desligada aqui. No hardware, trocar por setCACert().
-  cliente.setInsecure();
+  // HTTPS em producao; HTTP puro para o gateway local do Wokwi
+  // (host.wokwi.internal). O transporte e escolhido pela URL, sem codigo
+  // especial por origem: o payload e o endpoint continuam os mesmos.
+  String destino(url);
+  WiFiClientSecure clienteSeguro;
+  WiFiClient clienteSimples;
+  bool seguro = destino.startsWith("https://");
+  if (seguro) {
+    // LIMITAÇÃO: o gateway do Wokwi não entrega a cadeia de certificados; a
+    // validação TLS fica desligada aqui. No hardware, trocar por setCACert().
+    clienteSeguro.setInsecure();
+  }
 
   HTTPClient http;
   http.setConnectTimeout(HTTP_TIMEOUT_MS);
   http.setTimeout(HTTP_TIMEOUT_MS);
-  if (!http.begin(cliente, String(url))) {
+  bool iniciou = seguro ? http.begin(clienteSeguro, destino)
+                        : http.begin(clienteSimples, destino);
+  if (!iniciou) {
     Serial.println("HTTP: falha ao iniciar a requisicao");
     return -3;
   }

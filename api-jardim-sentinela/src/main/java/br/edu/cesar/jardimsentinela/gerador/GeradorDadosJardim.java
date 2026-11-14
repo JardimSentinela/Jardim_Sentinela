@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit;
  * Simula a rede Sentinela: cada jardim é um dispositivo independente, com seu próprio
  * sensor, frequência de envio e comportamento do nível de água.
  *
- * O JSON enviado usa o mesmo contrato do firmware (docs/contrato-final-telemetria.md):
+ * O JSON enviado usa o mesmo contrato do firmware (docs/contrato-telemetria.md):
  * {@code idJardim}, {@code idSensor}, {@code nivelAgua}, {@code bateria} e
  * {@code timestamp}. Assim, Wokwi e simulador são processados pelo mesmo endpoint,
  * sem nenhum tratamento especial por origem.
