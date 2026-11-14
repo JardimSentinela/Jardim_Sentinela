@@ -38,7 +38,8 @@ curl http://localhost:8080/api/jardins/J01
 }
 ```
 
-Jardim sem nenhuma leitura ainda → **404**, corpo vazio. O dashboard precisa
+Jardim sem nenhuma leitura ainda → **404** com corpo JSON padronizado
+(`erro: "JARDIM_NAO_ENCONTRADO"`, ver "Erros" abaixo). O dashboard precisa
 tratar esse caso (jardim cadastrado mas ainda sem dado é diferente de erro).
 
 ### `GET /api/jardins/{id}/leituras?limite=N` — histórico
@@ -60,8 +61,8 @@ curl "http://localhost:8080/api/jardins/J01/leituras?limite=5"
 ```
 
 `timestampDispositivo` vem `null` quando a origem não manda `timestamp`
-(hoje, o simulador). Jardim inexistente → **404**, array vazio não é o
-mesmo caso.
+(hoje, o simulador). Jardim sem nenhuma leitura → **404** com o mesmo corpo
+`JARDIM_NAO_ENCONTRADO` do endpoint acima; array vazio não é o mesmo caso.
 
 ### `GET /api/leituras` — todas as leituras (sem filtro por jardim)
 
@@ -72,7 +73,8 @@ sempre.
 
 ### `GET /api/leituras/{id}` — uma leitura específica por id numérico
 
-404 se não existir.
+404 se não existir, **com corpo vazio** (diferente dos endpoints de
+`/api/jardins`, que devolvem o corpo JSON de erro).
 
 ### `POST /api/leituras` — ingestão (não é consumida pelo dashboard, mas documentada aqui porque é a mesma API)
 
@@ -90,6 +92,19 @@ Erro de validação (campo ausente/inválido):
   "erro": "PAYLOAD_INVALIDO",
   "mensagem": "Um ou mais campos não passaram na validação.",
   "campos": [{ "campo": "jardimId", "mensagem": "não deve estar em branco" }],
+  "momento": "2026-11-04T14:05:00Z"
+}
+```
+
+Jardim sem nenhuma leitura (`GET /api/jardins/{id}` e
+`GET /api/jardins/{id}/leituras`), **404**:
+
+```json
+{
+  "status": 404,
+  "erro": "JARDIM_NAO_ENCONTRADO",
+  "mensagem": "Não existe leitura registrada para o jardim 'J99'.",
+  "campos": [],
   "momento": "2026-11-04T14:05:00Z"
 }
 ```
