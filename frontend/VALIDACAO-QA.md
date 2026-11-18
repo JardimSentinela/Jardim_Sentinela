@@ -72,11 +72,11 @@ dist/assets/index-u4_ZSB9u.js   677,19 kB │ gzip: 195,95 kB
 
 ## 5. Observações e recomendações
 
-1. **Baixa severidade — texto fixo no StatusCard:** o selo e a linha de subtítulo exibem sempre "Estado de alerta" / "Estado de alerta — …", inclusive quando o estado é **Normal** (J04), quando o texto correto seria algo como "Estado normal". Sugestão: derivar o rótulo de `alerta.nivel` em `src/components/StatusCard.tsx` (linhas ~282 e ~290).
+1. **Corrigido — texto fixo no StatusCard:** o selo e a linha de subtítulo exibiam sempre "Estado de alerta" / "Estado de alerta — …", inclusive quando o estado era **Normal** (J04). Ajustado durante esta etapa em `src/components/StatusCard.tsx` para derivar o rótulo de `nivel` ("Estado normal" / "Monitoramento regular"); revalidado ao vivo no portal com J04 e novo `lint`/`build` verdes.
 2. **Informativo — bundle:** chunk principal de 677 kB por causa do `recharts`. Recomenda-se `manualChunks`/lazy-load dos gráficos para reduzir o TTI.
 3. **Informativo — indicador de conexão:** como a API Java não está em execução neste ambiente, o badge mostra "Dados Mockados / Demonstração", comportamento esperado e implementado.
 4. **Acessibilidade:** papéis `tab`/`listbox`/`option`/`progressbar` e rótulos ARIA presentes e coerentes; navegação por teclado na busca (Enter/Escape) funcionando.
 
 ## 6. Conclusão
 
-✅ **Aprovado.** Lint limpo, build de produção bem-sucedido, dashboard estável nos temas claro/escuro, ambas as abas funcionais, seleção/busca dos jardins operando e layout responsivo sem regressões. Apenas o ajuste de texto do selo (item 1) é recomendado antes da entrega final.
+✅ **Aprovado.** Lint limpo, build de produção bem-sucedido, dashboard estável nos temas claro/escuro, ambas as abas funcionais, seleção/busca dos jardins operando e layout responsivo sem regressões. O único ajuste encontrado (texto do selo de status) foi corrigido e revalidado nesta mesma etapa.
