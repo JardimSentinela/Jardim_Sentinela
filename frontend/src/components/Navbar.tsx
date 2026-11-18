@@ -1,31 +1,18 @@
 import { useEffect, useState } from 'react'
-import {
-  CalendarDays,
-  Clock3,
-  Flower2,
-  LayoutDashboard,
-  Moon,
-  ShieldCheck,
-  Sun,
-} from 'lucide-react'
+import { CalendarDays, Clock3, Flower2, Moon, Sun } from 'lucide-react'
 
 export type AbaPainel = 'jardim' | 'cop'
 
 interface NavbarProps {
   temaEscuro: boolean
-  /** Define explicitamente o tema (usado pelos dois botões do seletor). */
   onDefinirTema: (escuro: boolean) => void
   abaAtiva: AbaPainel
   onMudarAba: (aba: AbaPainel) => void
 }
 
-const ABAS: Array<{
-  id: AbaPainel
-  rotulo: string
-  icone: typeof LayoutDashboard
-}> = [
-  { id: 'jardim', rotulo: 'Painel Jardim Sentinela', icone: LayoutDashboard },
-  { id: 'cop', rotulo: 'Painel COP', icone: ShieldCheck },
+const ABAS: Array<{ id: AbaPainel; rotulo: string }> = [
+  { id: 'jardim', rotulo: 'Painel Jardim Sentinela' },
+  { id: 'cop', rotulo: 'Painel COP' },
 ]
 
 function doisDigitos(valor: number): string {
@@ -42,7 +29,6 @@ function formatarHora(data: Date): string {
   return `${doisDigitos(data.getHours())}:${doisDigitos(data.getMinutes())}`
 }
 
-/** Relógio local, atualizado a cada segundo para virar o minuto sem atraso. */
 function useAgora(): Date {
   const [agora, setAgora] = useState(() => new Date())
 
@@ -54,28 +40,6 @@ function useAgora(): Date {
   return agora
 }
 
-function IndicadorRelogio({
-  icone: Icone,
-  rotulo,
-  valor,
-}: {
-  icone: typeof CalendarDays
-  rotulo: string
-  valor: string
-}) {
-  return (
-    <div className="flex items-center gap-2 rounded-xl border border-[var(--cor-borda)] bg-[var(--cor-superficie-suave)] px-3 py-2">
-      <Icone className="h-4 w-4 text-jardin-600 dark:text-jardin-300" aria-hidden="true" />
-      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--cor-texto-suave)]">
-        {rotulo}
-      </span>
-      <span className="text-sm font-semibold tabular-nums text-[var(--cor-texto-forte)]">
-        {valor}
-      </span>
-    </div>
-  )
-}
-
 export default function Navbar({
   temaEscuro,
   onDefinirTema,
@@ -85,116 +49,122 @@ export default function Navbar({
   const agora = useAgora()
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[var(--cor-borda)] bg-white/85 backdrop-blur-xl dark:bg-slate-950/85">
+    <header className="border-b border-[var(--cor-borda)] bg-[var(--cor-superficie)]">
       <div className="mx-auto w-full max-w-[1440px] px-4 sm:px-6 lg:px-8">
-        <div className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 py-3">
-          {/* Identidade visual */}
-          <div className="flex items-center gap-3.5">
-            <span className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-jardin-500 via-jardin-600 to-agua-600 text-white shadow-lg shadow-jardin-600/25 ring-1 ring-white/20">
-              <Flower2 className="h-6 w-6" aria-hidden="true" />
-              <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white dark:bg-slate-900">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4 py-4 lg:grid lg:grid-cols-[1fr_auto_1fr]">
+          <div className="flex items-center gap-4">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#071d41] text-white">
+              <Flower2 className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
-              <h1 className="text-lg leading-tight sm:text-xl">Jardim Sentinela</h1>
-              <p className="text-xs font-medium text-[var(--cor-texto-suave)] sm:text-[13px]">
+              <div className="font-display text-lg font-bold leading-tight">
+                Jardim Sentinela
+              </div>
+              <p className="text-xs text-[var(--cor-texto-suave)]">
                 Rede de Jardins Monitorados
               </p>
             </div>
           </div>
 
-          {/* Relógio + tema */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="hidden items-center gap-2 md:flex">
-              <IndicadorRelogio icone={CalendarDays} rotulo="Data" valor={formatarData(agora)} />
-              <IndicadorRelogio icone={Clock3} rotulo="Hora" valor={formatarHora(agora)} />
-            </div>
-
-            <div
-              role="group"
-              aria-label="Selecionar tema"
-              className="flex items-center rounded-xl border border-[var(--cor-borda)] bg-[var(--cor-superficie-suave)] p-1"
+          <div className="order-3 flex w-full items-center justify-center gap-2 sm:gap-4 lg:order-none lg:w-auto">
+            <button
+              type="button"
+              onClick={() => onDefinirTema(false)}
+              aria-pressed={!temaEscuro}
+              className={`text-sm transition-colors ${
+                temaEscuro
+                  ? 'text-[var(--cor-texto-suave)] hover:text-[var(--cor-texto)]'
+                  : 'font-semibold text-[var(--cor-texto-forte)]'
+              }`}
             >
-              <button
-                type="button"
-                onClick={() => onDefinirTema(false)}
-                aria-pressed={!temaEscuro}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all ${
-                  temaEscuro
-                    ? 'text-[var(--cor-texto-suave)] hover:text-[var(--cor-texto)]'
-                    : 'bg-[var(--cor-superficie)] text-jardin-700 shadow-sm ring-1 ring-black/5 dark:text-jardin-200 dark:ring-white/10'
+              Modo Claro
+            </button>
+            <Sun
+              className={`h-4 w-4 ${
+                temaEscuro ? 'text-[var(--cor-texto-suave)]' : 'text-[#e4b739]'
+              }`}
+              aria-hidden="true"
+            />
+            <button
+              type="button"
+              role="switch"
+              aria-checked={temaEscuro}
+              aria-label="Alternar entre modo claro e escuro"
+              onClick={() => onDefinirTema(!temaEscuro)}
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                temaEscuro ? 'bg-[#005b7f]' : 'bg-[#d1d5db] dark:bg-[#5a5969]'
+              }`}
+            >
+              <span
+                className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                  temaEscuro ? 'translate-x-5' : 'translate-x-0'
                 }`}
-              >
-                <Sun className="h-4 w-4" aria-hidden="true" />
-                <span className="hidden sm:inline">Modo Claro</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onDefinirTema(true)}
-                aria-pressed={temaEscuro}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all ${
-                  temaEscuro
-                    ? 'bg-[var(--cor-superficie)] text-jardin-200 shadow-sm ring-1 ring-white/10'
-                    : 'text-[var(--cor-texto-suave)] hover:text-[var(--cor-texto)]'
-                }`}
-              >
-                <Moon className="h-4 w-4" aria-hidden="true" />
-                <span className="hidden sm:inline">Modo Escuro</span>
-              </button>
-            </div>
+              />
+            </button>
+            <Moon
+              className={`h-4 w-4 ${
+                temaEscuro
+                  ? 'text-[#4cc7fb]'
+                  : 'text-[var(--cor-texto-suave)]'
+              }`}
+              aria-hidden="true"
+            />
+            <button
+              type="button"
+              onClick={() => onDefinirTema(true)}
+              aria-pressed={temaEscuro}
+              className={`text-sm transition-colors ${
+                temaEscuro
+                  ? 'font-semibold text-[var(--cor-texto-forte)]'
+                  : 'text-[var(--cor-texto-suave)] hover:text-[var(--cor-texto)]'
+              }`}
+            >
+              Modo Escuro
+            </button>
+          </div>
+
+          <div className="flex flex-col items-end gap-1 text-xs text-[var(--cor-texto)] sm:flex-row sm:items-center sm:gap-4 sm:text-sm lg:justify-self-end">
+            <span className="inline-flex items-center gap-2">
+              <CalendarDays
+                className="h-4 w-4 text-[var(--cor-texto-suave)]"
+                aria-hidden="true"
+              />
+              Data <strong className="font-semibold">{formatarData(agora)}</strong>
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <Clock3
+                className="h-4 w-4 text-[var(--cor-texto-suave)]"
+                aria-hidden="true"
+              />
+              Hora{' '}
+              <strong className="font-brand font-semibold tabular-nums">
+                {formatarHora(agora)}
+              </strong>
+            </span>
           </div>
         </div>
 
-        {/* Navegação principal */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <nav aria-label="Painéis" className="flex items-center gap-1 sm:gap-2">
-            {ABAS.map((aba) => {
-              const Icone = aba.icone
-              const ativa = abaAtiva === aba.id
-              return (
-                <button
-                  key={aba.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={ativa}
-                  onClick={() => onMudarAba(aba.id)}
-                  className={`group relative -mb-px flex items-center gap-2 border-b-2 px-3 pb-3 pt-2 text-sm font-semibold transition-colors sm:px-4 ${
-                    ativa
-                      ? 'border-jardin-500 text-jardin-700 dark:border-jardin-400 dark:text-jardin-300'
-                      : 'border-transparent text-[var(--cor-texto-suave)] hover:border-[var(--cor-borda-forte)] hover:text-[var(--cor-texto)]'
-                  }`}
-                >
-                  <Icone
-                    className={`h-4 w-4 transition-transform group-hover:-translate-y-0.5 ${
-                      ativa ? 'text-jardin-500 dark:text-jardin-400' : ''
-                    }`}
-                    aria-hidden="true"
-                  />
-                  {aba.rotulo}
-                </button>
-              )
-            })}
-          </nav>
-
-          <div className="flex w-full items-center justify-end gap-3 pb-2 text-[11px] font-medium text-[var(--cor-texto-suave)] md:w-auto">
-            <span className="hidden items-center gap-2 md:inline-flex">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-              Atualização automática a cada 5s
-            </span>
-            <span className="inline-flex items-center gap-1.5 md:hidden">
-              <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
-              {formatarData(agora)}
-            </span>
-            <span className="inline-flex items-center gap-1.5 md:hidden">
-              <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />
-              {formatarHora(agora)}
-            </span>
-          </div>
-        </div>
+        <nav aria-label="Painéis" className="mt-1 flex gap-6">
+          {ABAS.map((aba) => {
+            const ativa = abaAtiva === aba.id
+            return (
+              <button
+                key={aba.id}
+                type="button"
+                role="tab"
+                aria-selected={ativa}
+                onClick={() => onMudarAba(aba.id)}
+                className={`relative -mb-px border-b-2 pb-3 pt-1 text-sm font-medium transition-colors ${
+                  ativa
+                    ? 'border-[#005b7f] text-[var(--cor-texto-forte)] dark:border-[#4cc7fb]'
+                    : 'border-transparent text-[var(--cor-texto-suave)] hover:border-[var(--cor-borda-forte)] hover:text-[var(--cor-texto)]'
+                }`}
+              >
+                {aba.rotulo}
+              </button>
+            )
+          })}
+        </nav>
       </div>
     </header>
   )

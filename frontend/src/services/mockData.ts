@@ -150,10 +150,10 @@ export const todasLeiturasMock: Leitura[] = Object.values(historicoMock)
   .flat()
   .sort((a, b) => new Date(b.recebidoEm).getTime() - new Date(a.recebidoEm).getTime())
 
-/** Painel COP mockado: estágio Atenção, com chuva acumulada e abrigos ativos. */
+/** Painel COP mockado: estágio Enchendo, com chuva acumulada e abrigos ativos. */
 export const dadosCOPMock: DadosCOP = {
-  estagio: 'ATENCAO',
-  estagioTexto: 'Atenção',
+  estagio: 'ENCHENDO',
+  estagioTexto: 'Enchendo',
   chuva24hMm: 78.6,
   chuvaMax24hMm: 112.4,
   abrigosAtivos: 2,

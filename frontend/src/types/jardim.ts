@@ -25,13 +25,35 @@ export interface Leitura {
   timestampDispositivo: string | null
 }
 
-export type NivelAlerta = 'NORMAL' | 'ATENCAO' | 'TRANSBORDANDO' | 'ALAGADO'
+/**
+ * Estados oficiais do Guia de Estilo (Manual da Marca / node 122-2).
+ * Substituem os antigos NORMAL/ATENCAO.
+ */
+export type NivelAlerta = 'SECO' | 'ENCHENDO' | 'TRANSBORDANDO' | 'ALAGADO'
+
+/** Ordem em que os quatro estados aparecem na pílula de indicadores. */
+export const ESTADOS_ALERTA: readonly NivelAlerta[] = [
+  'SECO',
+  'ENCHENDO',
+  'TRANSBORDANDO',
+  'ALAGADO',
+]
+
+/** Cores digitais oficiais de cada estado de alerta. */
+export const CORES_ESTADO: Record<NivelAlerta, string> = {
+  SECO: '#e4b739',
+  ENCHENDO: '#30e4bc',
+  TRANSBORDANDO: '#005b7f',
+  ALAGADO: '#141781',
+}
 
 export interface InformacoesAlerta {
   titulo: string
   subtitulo: string
   descricao: string
   cor: string
+  /** Cor de texto com contraste adequado sobre `cor` (âmbar e turquesa pedem texto escuro). */
+  corTexto: string
   nivel: NivelAlerta
 }
 
@@ -49,62 +71,66 @@ export const NIVEL_MAXIMO_JARDIM_CM = 50
 
 /**
  * Faixas de alerta do protótipo, proporcionais à capacidade de 50 cm:
- * - NORMAL: menos de 15 cm (até 30% da capacidade);
- * - ATENCAO: de 15 cm a menos de 30 cm (30% a 60%);
+ * - SECO: menos de 15 cm (até 30% da capacidade);
+ * - ENCHENDO: de 15 cm a menos de 30 cm (30% a 60%);
  * - TRANSBORDANDO: de 30 cm a menos de 45 cm (60% a 90%);
  * - ALAGADO: 45 cm ou mais (a partir de 90% da capacidade).
  */
 export const LIMITES_ALERTA_CM = {
-  atencao: 15,
+  enchendo: 15,
   transbordando: 30,
   alagado: 45,
 } as const
 
 const INFORMACOES_POR_NIVEL: Record<NivelAlerta, Omit<InformacoesAlerta, 'nivel'>> = {
-  NORMAL: {
-    titulo: 'Nível normal',
-    subtitulo: 'Jardim em equilíbrio',
+  SECO: {
+    titulo: 'Seco',
+    subtitulo: 'Nível baixo',
     descricao:
-      'O nível da água está baixo e o jardim segue drenando normalmente. Nenhuma ação necessária.',
-    cor: '#16a34a',
+      'Sensor do totem físico do Jardim Sentinela identifica nível de água baixo, abaixo do habitual. O jardim segue drenando normalmente e não requer ação imediata.',
+    cor: CORES_ESTADO.SECO,
+    corTexto: '#071d41',
   },
-  ATENCAO: {
-    titulo: 'Atenção',
-    subtitulo: 'Nível acima do habitual',
+  ENCHENDO: {
+    titulo: 'Enchendo',
+    subtitulo: 'Nível em elevação',
     descricao:
-      'A água está acumulando acima do comum. Acompanhe as próximas leituras e verifique a drenagem.',
-    cor: '#d97706',
+      'Sensor do totem físico do Jardim Sentinela identifica nível de água em elevação. A drenagem segue ativa, mas o volume pede acompanhamento nas próximas leituras.',
+    cor: CORES_ESTADO.ENCHENDO,
+    corTexto: '#071d41',
   },
   TRANSBORDANDO: {
     titulo: 'Transbordando',
-    subtitulo: 'Próximo da capacidade máxima',
+    subtitulo: 'Transbordamento',
     descricao:
-      'O jardim está perto do limite e pode extravasar. Evite circular pela área e acompanhe o nível.',
-    cor: '#ea580c',
+      'Sensor do totem físico do Jardim Sentinela identifica nível de água acima da capacidade de contenção. A água pode extravasar para a área de circulação; acompanhe o nível e acione a equipe de manutenção.',
+    cor: CORES_ESTADO.TRANSBORDANDO,
+    corTexto: '#ffffff',
   },
   ALAGADO: {
     titulo: 'Alagado',
-    subtitulo: 'Capacidade esgotada',
+    subtitulo: 'Alagamento',
     descricao:
-      'O jardim atingiu a capacidade máxima. Não transite pelo local e acione a equipe responsável.',
-    cor: '#dc2626',
+      'Sensor do totem físico do Jardim Sentinela identifica nível de água na capacidade máxima de contenção. A água pode transbordar para o entorno; isole a área e acione a equipe responsável.',
+    cor: CORES_ESTADO.ALAGADO,
+    corTexto: '#ffffff',
   },
 }
 
 /**
  * Classifica o nível de água (em cm) em um dos quatro estados de alerta.
- * Valores negativos ou não finitos são tratados como nível zero (normal).
+ * Valores negativos ou não finitos são tratados como nível zero (seco).
  */
 export function calcularStatusAlerta(nivelCm: number): InformacoesAlerta {
   const nivel = Number.isFinite(nivelCm) ? Math.max(0, nivelCm) : 0
 
-  let chave: NivelAlerta = 'NORMAL'
+  let chave: NivelAlerta = 'SECO'
   if (nivel >= LIMITES_ALERTA_CM.alagado) {
     chave = 'ALAGADO'
   } else if (nivel >= LIMITES_ALERTA_CM.transbordando) {
     chave = 'TRANSBORDANDO'
-  } else if (nivel >= LIMITES_ALERTA_CM.atencao) {
-    chave = 'ATENCAO'
+  } else if (nivel >= LIMITES_ALERTA_CM.enchendo) {
+    chave = 'ENCHENDO'
   }
 
   return { ...INFORMACOES_POR_NIVEL[chave], nivel: chave }
