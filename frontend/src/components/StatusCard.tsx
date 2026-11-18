@@ -278,8 +278,12 @@ export default function StatusCard({
               color: 'var(--alerta-cor)',
             }}
           >
-            <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-            Estado de alerta
+            {nivel === 'NORMAL' ? (
+              <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            {nivel === 'NORMAL' ? 'Estado normal' : 'Estado de alerta'}
           </span>
 
           <h3 className="mt-3 text-xl leading-tight sm:text-[22px]">
@@ -287,7 +291,7 @@ export default function StatusCard({
             <span style={{ color: 'var(--alerta-cor)' }}>{alerta.titulo}</span>
           </h3>
           <p className="mt-1 text-sm font-medium text-[var(--cor-texto)]">
-            Estado de alerta — {alerta.subtitulo}
+            {nivel === 'NORMAL' ? 'Monitoramento regular' : 'Estado de alerta'} — {alerta.subtitulo}
           </p>
 
           <p className="mt-3 text-[13px] leading-relaxed text-[var(--cor-texto-suave)]">
