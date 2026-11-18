@@ -1,0 +1,77 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --cor-fundo: theme('colors.slate.50');
+    --cor-superficie: theme('colors.white');
+    --cor-texto: theme('colors.slate.800');
+    --cor-texto-suave: theme('colors.slate.500');
+    --cor-borda: theme('colors.slate.200');
+  }
+
+  .dark {
+    color-scheme: dark;
+    --cor-fundo: theme('colors.slate.950');
+    --cor-superficie: theme('colors.slate.900');
+    --cor-texto: theme('colors.slate.100');
+    --cor-texto-suave: theme('colors.slate.400');
+    --cor-borda: theme('colors.slate.800');
+  }
+
+  * {
+    @apply border-slate-200 dark:border-slate-800;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply m-0 min-h-screen bg-[var(--cor-fundo)] font-sans text-[var(--cor-texto)] antialiased;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-semibold tracking-tight;
+  }
+
+  a {
+    @apply text-jardin-600 underline-offset-2 hover:underline dark:text-jardin-300;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-jardin-500 ring-offset-2 ring-offset-[var(--cor-fundo)];
+  }
+
+  ::selection {
+    @apply bg-jardin-200 text-jardin-950;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-[var(--cor-borda)] bg-[var(--cor-superficie)] p-6 shadow-sm;
+  }
+}
+
+@layer utilities {
+  .text-suave {
+    color: var(--cor-texto-suave);
+  }
+}
