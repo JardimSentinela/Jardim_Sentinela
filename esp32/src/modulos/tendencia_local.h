@@ -58,4 +58,18 @@ TendenciaLocal calcularTendenciaLocal(const LeituraTendencia* leituras, size_t n
 // "SUBINDO", "ESTAVEL", "DESCENDO", "INSUFICIENTE", "INDETERMINADO" ou "DESATUALIZADO".
 const char* nomeTendencia(TendenciaLocal tendencia);
 
+// Historico de tamanho fixo: guarda so as JANELA_TENDENCIA leituras mais
+// recentes, da mais antiga para a mais nova. Inicialize com "= {}".
+struct HistoricoTendencia {
+  LeituraTendencia itens[JANELA_TENDENCIA];
+  size_t n;
+};
+
+// Acrescenta a leitura; com o historico cheio, descarta a mais antiga.
+void registrarLeituraTendencia(HistoricoTendencia& historico, const LeituraTendencia& leitura);
+
+// Tendencia calculada sobre o historico (mesma regra de calcularTendenciaLocal).
+TendenciaLocal tendenciaDoHistorico(const HistoricoTendencia& historico, uint32_t bootIdAtual,
+                                    uint32_t agoraMs, uint32_t idadeMaximaMs);
+
 #endif

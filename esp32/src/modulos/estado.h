@@ -6,19 +6,7 @@
 #include <time.h>
 
 #include "config.h"
-
-// Tipo do registro gravado no arquivo.
-enum TipoRegistro : uint8_t { REG_EVENTO = 0, REG_SNAPSHOT = 1, REG_BOOT = 2 };
-
-struct Evento {
-  TipoRegistro tipo;
-  uint8_t  sensor;
-  float    nivelAgua;
-  uint32_t deltaTMs;
-  uint32_t tMs;
-  uint32_t seq;           // atribuido na criacao do registro (deixa buraco se perder)
-  bool     relogioValido; // estado do relogio no momento em que o registro nasceu
-};
+#include "evento.h"   // TipoRegistro e Evento
 
 // Contadores do envio (comando 'i'). "pendentes" e derivado do arquivo; os
 // demais so passam a ser incrementados quando o transporte real existir.

@@ -3,6 +3,8 @@
 #include "linha.h"
 #include "config.h"
 #include "estado.h"
+#include "estado_fisico.h"
+#include "tendencia_local.h"
 
 // Devolve o texto do tipo do registro ("evento", "snapshot" ou "boot").
 const char* nomeTipo(TipoRegistro tipo) {
@@ -62,6 +64,23 @@ void montarLinha(const Evento& e, const char* ts, const char* idSensor,
   }
   if (e.tipo == REG_BOOT) {
     snprintf(parte, sizeof(parte), ",\"%s\":%.6f,\"%s\":%.6f", CAMPO_LAT, LATITUDE, CAMPO_LON, LONGITUDE);
+    anexar(buffer, tamanho, usado, parte);
+  }
+  // Campos v2: so gravados se o registro tem classificacao (0xFF ou valor fora da
+  // lista = sem classificacao). Mesma ordem do gateway: antes de horaSincronizada.
+  const bool temEstado = e.estado <= codec::ESTADO_MAX;
+  const bool temTendencia = e.tendencia <= codec::TENDENCIA_MAX;
+  if (temEstado) {
+    snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"", CAMPO_ESTADO, nomeEstado((EstadoFisico)e.estado));
+    anexar(buffer, tamanho, usado, parte);
+  }
+  if (temTendencia) {
+    snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"", CAMPO_TENDENCIA,
+             nomeTendencia((TendenciaLocal)e.tendencia));
+    anexar(buffer, tamanho, usado, parte);
+  }
+  if (temEstado || temTendencia) {
+    snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"", CAMPO_VERSAO_REGRA, VERSAO_REGRA);
     anexar(buffer, tamanho, usado, parte);
   }
   snprintf(parte, sizeof(parte), ",\"%s\":%s", CAMPO_HORA_SINC, e.relogioValido ? "true" : "false");

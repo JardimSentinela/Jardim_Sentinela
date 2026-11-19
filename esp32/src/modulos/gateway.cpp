@@ -247,6 +247,8 @@ static bool testarCodec(const char* nome, const Evento& e, const char* tsTexto) 
   r.lat = 0;
   r.lon = 0;
   r.coords = (e.tipo == REG_BOOT);
+  r.estado = e.estado;
+  r.tendencia = e.tendencia;
 
   uint8_t quadro[codec::MAX_COM_EXTRAS];
   size_t n = codec::codificar(q, quadro, sizeof(quadro));
@@ -276,9 +278,10 @@ static bool testarCodec(const char* nome, const Evento& e, const char* tsTexto) 
 // Comando 't': round-trip dos tres tipos, incluindo o JSON do gateway.
 void rodarTesteCodec() {
   Serial.println("--- TESTE CODEC ---");
-  Evento ev{REG_EVENTO, 0, 5.0f, 3200, 0, 7, true};
-  Evento sn{REG_SNAPSHOT, 0, 10.0f, 0, 0, 8, true};
-  Evento bt{REG_BOOT, 0, 0.0f, 0, 0, 0, false};
+  // Sem classificacao (linha antiga), com estado e tendencia, e boot classificado.
+  Evento ev{REG_EVENTO, 0, 5.0f, 3200, 0, 7, true, codec::SEM_CLASSIFICACAO, codec::SEM_CLASSIFICACAO};
+  Evento sn{REG_SNAPSHOT, 0, 10.0f, 0, 0, 8, true, 1, 0};
+  Evento bt{REG_BOOT, 0, 0.0f, 0, 0, 0, false, 0, 3};
   bool ok = testarCodec("evento", ev, "2026-10-21T20:40:35Z");
   ok = testarCodec("snapshot", sn, "2026-10-21T20:40:40Z") && ok;
   ok = testarCodec("boot", bt, "2026-10-21T20:40:00Z") && ok;

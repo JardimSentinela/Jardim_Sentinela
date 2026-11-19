@@ -1,6 +1,7 @@
 // ===== AMOSTRAGEM ===========================================================
 
 #include "amostragem.h"
+#include "classificador_sonda.h"
 #include "config.h"
 #include "estado.h"
 #include "hw02_sonda.h"
@@ -46,9 +47,18 @@ void tarefaAmostragem(void*) {
   float ultimoNivelSonda = 0.0f;
   bool  temLeituraSonda  = false;
 
+  // Estado fisico e tendencia saem da SONDA (decisoes §8, a confirmar pelo grupo).
+  // Os T1592 validam o protocolo e NAO classificam o estado: seus registros levam
+  // 0xFF. g_bootId ja foi gerado no setup, antes desta tarefa nascer.
+  ClassificadorSonda classificador;
+  iniciarClassificador(classificador, (uint32_t)strtoul(g_bootId, nullptr, 16),
+                       idadeMaximaTendenciaMs(PERIODO_SNAPSHOT_MS));
+
   // Primeira linha do arquivo: "boot" (seq 0), com o nível lido no boot e as
   // coordenadas configuradas. Fica na frente de qualquer evento ou snapshot.
-  Evento b{REG_BOOT, 0, nivelDe(estado), 0, millis(), g_seq++, relogioValido()};
+  // O boot nao classifica: ainda nao ha leitura da sonda nem snapshots.
+  Evento b{REG_BOOT, 0, nivelDe(estado), 0, millis(), g_seq++, relogioValido(),
+           codec::SEM_CLASSIFICACAO, codec::SEM_CLASSIFICACAO};
   enviar(b);
 
   uint32_t proxSnap = millis();
@@ -61,6 +71,7 @@ void tarefaAmostragem(void*) {
     if (atualizarSonda(sonda)) {
       ultimoNivelSonda = sonda.nivelCm;
       temLeituraSonda  = true;
+      classificarLeituraSonda(classificador, sonda.nivelCm);
 
       Serial.printf(
           "[HW-02] ADC: %d | Nivel: %.2f cm | Taxa: %.2f cm/min | Mudou: %s\n",
@@ -70,8 +81,11 @@ void tarefaAmostragem(void*) {
       // Variacao >= 1 cm: registra como evento do sensor-04. A taxa ainda nao
       // cabe no quadro v1; por enquanto fica so no log local.
       if (sonda.mudou) {
+        const uint32_t agora = millis();
         Evento e{REG_EVENTO, SENSOR_SONDA, sonda.nivelCm, 0,
-                 millis(), g_seq++, relogioValido()};
+                 agora, g_seq++, relogioValido(),
+                 estadoParaRegistro(classificador),
+                 tendenciaParaRegistro(classificador, agora)};
         enviar(e);
       }
     }
@@ -98,7 +112,9 @@ void tarefaAmostragem(void*) {
           tUltimoPatamar = 0;
         }
 
-        Evento e{REG_EVENTO, i, nivelDe(estado), dt, tPrimeiro[i], g_seq++, relogioValido()};
+        // Evento de T1592 (validacao do protocolo): sem classificacao.
+        Evento e{REG_EVENTO, i, nivelDe(estado), dt, tPrimeiro[i], g_seq++, relogioValido(),
+                 codec::SEM_CLASSIFICACAO, codec::SEM_CLASSIFICACAO};
         enviar(e);
       }
     }
@@ -113,7 +129,17 @@ void tarefaAmostragem(void*) {
       // O nivel do heartbeat vem da sonda continua; sem leitura dela ainda,
       // cai para a escada T1592.
       float nivelSnap = temLeituraSonda ? ultimoNivelSonda : nivelDe(estado);
-      Evento s{REG_SNAPSHOT, sensAtivo, nivelSnap, 0, millis(), g_seq++, relogioValido()};
+      // So o snapshot alimenta o historico da tendencia (intervalo regular). Sem
+      // leitura da sonda ainda, o nivel vem da escada T1592 e o estado fica 0xFF.
+      const uint32_t agora = millis();
+      const uint32_t seqSnap = g_seq++;
+      uint8_t estadoSnap = codec::SEM_CLASSIFICACAO;
+      if (temLeituraSonda) {
+        registrarSnapshotSonda(classificador, seqSnap, agora, ultimoNivelSonda);
+        estadoSnap = estadoParaRegistro(classificador);
+      }
+      Evento s{REG_SNAPSHOT, sensAtivo, nivelSnap, 0, agora, seqSnap, relogioValido(),
+               estadoSnap, tendenciaParaRegistro(classificador, agora)};
       enviar(s);
       proxSnap += PERIODO_SNAPSHOT_MS;
     }

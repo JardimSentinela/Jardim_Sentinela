@@ -64,3 +64,17 @@ const char* nomeTendencia(TendenciaLocal tendencia) {
     default:                            return "ESTAVEL";
   }
 }
+
+void registrarLeituraTendencia(HistoricoTendencia& historico, const LeituraTendencia& leitura) {
+  if (historico.n < JANELA_TENDENCIA) {
+    historico.itens[historico.n++] = leitura;
+    return;
+  }
+  for (size_t i = 1; i < JANELA_TENDENCIA; i++) historico.itens[i - 1] = historico.itens[i];
+  historico.itens[JANELA_TENDENCIA - 1] = leitura;
+}
+
+TendenciaLocal tendenciaDoHistorico(const HistoricoTendencia& historico, uint32_t bootIdAtual,
+                                    uint32_t agoraMs, uint32_t idadeMaximaMs) {
+  return calcularTendenciaLocal(historico.itens, historico.n, bootIdAtual, agoraMs, idadeMaximaMs);
+}

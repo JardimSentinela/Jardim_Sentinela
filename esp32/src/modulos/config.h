@@ -18,7 +18,9 @@
 #endif
 
 // ===== CONFIGURACAO ==========================================================
-constexpr const char* JARDIM_ID = "jardim-centro-01";  // Conforme contrato de telemetria
+// Id do jardim: constante unica (decisoes-tecnicas §6.1, regex ^J\d{2}$). Linhas
+// antigas, gravadas com "jardim-centro-01", saem com este id no envio.
+constexpr const char* JARDIM_ID = "J01";
 
 // Sensores resistivos T1592 em ordem CRESCENTE de altura (indice 0 = mais baixo).
 // Wokwi: 3 potenciometros em GPIO32, GPIO33, GPIO34 com alimentacao em GPIO25, GPIO26, GPIO27.
