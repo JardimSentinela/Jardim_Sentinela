@@ -1,7 +1,7 @@
 # Relatório — Tarefa C: estado físico, tendência local e sinalização do totem
 
 > **Cards:** [SW-13] Classificar estado físico do jardim (SCRUM-26) e parte de [SW-14] (tendência local).
-> **Branch:** `feat/SCRUM-26-estado-totem` (a partir de `origin/develop`). **Sem push.**
+> **Branch:** `feat/SCRUM-26-estado-totem` (a partir de `origin/develop`). **PR Aberto.**
 > **Autoria dos commits:** Júlia Tenório Calado `<jtc@cesar.school>`.
 > **Roteiro da simulação:** [`docs/validacao-sinalizacao.md`](validacao-sinalizacao.md).
 >
