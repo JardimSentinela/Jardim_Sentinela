@@ -1,53 +1,74 @@
 # Vetores da tendencia local (decisoes-tecnicas §5.2). PROVISORIO.
-# Formato: niveisCm,idadeSegundos,esperado
-#   niveisCm      leituras em ordem de chegada, separadas por ';' (cm).
-#                 "nan", "inf" e negativos sao leituras INVALIDAS (ignoradas).
-#                 Campo vazio = nenhuma leitura.
-#   idadeSegundos idade da ULTIMA leitura da lista, medida ate "agora".
-#   Cada leitura chega 5 s depois da anterior (snapshot da simulacao).
+# Formato: leituras,bootAtual,idadeSegundos,esperado
+#   leituras       em ORDEM DE CHEGADA, separadas por ';'. Cada item e "nivel"
+#                  (boot 1) ou "B:nivel" (boot B). "nan", "inf" e negativos sao
+#                  leituras INVALIDAS (ignoradas). Campo vazio = nenhuma leitura.
+#                  Dentro de cada boot, seq e tMs comecam em 0 e avancam a cada
+#                  item daquele boot (seq +1, tMs +5000 ms): um reinicio faz o seq
+#                  e o tMs voltarem a zero, e os dois NAO sao comparaveis entre boots.
+#   bootAtual      boot em execucao. So as leituras dele entram na janela;
+#                  leituras de outro boot sao ignoradas, mesmo as que chegam depois.
+#   idadeSegundos  idade da ULTIMA leitura do boot atual (valida ou nao), medida
+#                  ate "agora". Cada leitura chega 5 s depois da anterior.
 # Parametros do vetor: janela N = 5 leituras validas, tolerancia 1,5 cm,
 # idade maxima 15 s (3 x 5 s). Idade exatamente igual a maxima NAO e velha.
 # Precedencia: INSUFICIENTE > DESATUALIZADO > INDETERMINADO > direcao.
 # O mesmo arquivo deve ser lido pelo teste da API (Tarefa B).
-niveisCm,idadeSegundos,esperado
+leituras,bootAtual,idadeSegundos,esperado
 
 # --- poucas leituras: INSUFICIENTE ---
-,0,INSUFICIENTE
-10,0,INSUFICIENTE
-10;11;12;13,0,INSUFICIENTE
-10;11;12;13,100,INSUFICIENTE
+,1,0,INSUFICIENTE
+10,1,0,INSUFICIENTE
+10;11;12;13,1,0,INSUFICIENTE
+10;11;12;13,1,100,INSUFICIENTE
 
 # --- direcao com 5 leituras ---
-10;10;10;10;10,0,ESTAVEL
-10;11;12;13;14,0,SUBINDO
-14;13;12;11;10,0,DESCENDO
+10;10;10;10;10,1,0,ESTAVEL
+10;11;12;13;14,1,0,SUBINDO
+14;13;12;11;10,1,0,DESCENDO
 
 # --- tolerancia de 1,5 cm: exatamente 1,5 e ESTAVEL ---
-10;10;10;10;11.5,0,ESTAVEL
-10;10;10;10;11.6,0,SUBINDO
-11.5;11.5;11.5;11.5;10,0,ESTAVEL
-11.6;11.6;11.6;11.6;10,0,DESCENDO
+10;10;10;10;11.5,1,0,ESTAVEL
+10;10;10;10;11.6,1,0,SUBINDO
+11.5;11.5;11.5;11.5;10,1,0,ESTAVEL
+11.6;11.6;11.6;11.6;10,1,0,DESCENDO
 
 # --- ESTAVEL nao significa nivel parado: so a variacao liquida conta ---
-10;14;8;12;10.5,0,ESTAVEL
+10;14;8;12;10.5,1,0,ESTAVEL
 
 # --- so as 5 ultimas leituras validas entram na janela ---
-1;2;3;4;5;5;5;5;5,0,ESTAVEL
-20;20;20;20;20;19;18;17;16,0,DESCENDO
+1;2;3;4;5;5;5;5;5,1,0,ESTAVEL
+20;20;20;20;20;19;18;17;16,1,0,DESCENDO
 
 # --- leituras invalidas ---
-10;nan;11;12;13;14,0,SUBINDO
-10;-1;11;12;13,0,INSUFICIENTE
-10;inf;11;12;13,0,INSUFICIENTE
-nan;-1;nan;-2;nan,0,INSUFICIENTE
-nan;-1;nan;-2;nan,100,INSUFICIENTE
+10;nan;11;12;13;14,1,0,SUBINDO
+10;-1;11;12;13,1,0,INSUFICIENTE
+10;inf;11;12;13,1,0,INSUFICIENTE
+nan;-1;nan;-2;nan,1,0,INSUFICIENTE
+nan;-1;nan;-2;nan,1,100,INSUFICIENTE
 
 # --- DESATUALIZADO: idade da ultima leitura acima de 15 s ---
-10;11;12;13;14,15,SUBINDO
-10;11;12;13;14,16,DESATUALIZADO
-10;10;10;10;10,16,DESATUALIZADO
-14;13;12;11;10,100,DESATUALIZADO
+10;11;12;13;14,1,15,SUBINDO
+10;11;12;13;14,1,16,DESATUALIZADO
+10;10;10;10;10,1,16,DESATUALIZADO
+14;13;12;11;10,1,100,DESATUALIZADO
 
 # --- a idade conta a ultima leitura VALIDA, nao uma invalida mais recente ---
-10;11;12;13;14;nan,0,SUBINDO
-10;11;12;13;14;nan,11,DESATUALIZADO
+10;11;12;13;14;nan,1,0,SUBINDO
+10;11;12;13;14;nan,1,11,DESATUALIZADO
+
+# --- (a) reinicio no meio da janela: seq volta a zero no boot 2 ---
+# Boot 1 subia e foi reiniciado. So o boot 2 conta; nao ha mistura dos dois.
+1:10;1:11;1:12;2:20;2:20;2:20,2,0,INSUFICIENTE
+1:10;1:11;1:12;1:13;1:14;2:30;2:30;2:30;2:30;2:30,2,0,ESTAVEL
+1:14;1:13;1:12;1:11;1:10;2:10;2:11;2:12;2:13;2:14,2,0,SUBINDO
+1:10;1:11;1:12;1:13;1:14;2:30,2,0,INSUFICIENTE
+
+# --- (b) registro de boot antigo chegando DEPOIS de um do boot atual ---
+# O retardatario nao vira o boot atual e nao entra na janela. Se entrasse (ou se o
+# boot do ultimo item valesse), o resultado seria SUBINDO, e nao DESCENDO.
+1:10;1:10;1:10;1:10;1:10;2:14;2:13;2:12;2:11;2:10;1:99,2,0,DESCENDO
+1:10;1:10;1:10;1:10;1:10;2:14;2:13;2:12;2:11;1:99,2,0,INSUFICIENTE
+2:10;2:10;1:99;2:10;2:10;2:10,2,0,ESTAVEL
+# idade conta a ultima leitura do boot atual, nao a do retardatario
+1:10;1:10;1:10;1:10;1:10;2:14;2:13;2:12;2:11;2:10;1:99,2,16,DESATUALIZADO

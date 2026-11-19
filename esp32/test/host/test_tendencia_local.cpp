@@ -1,7 +1,11 @@
 // Tendencia local (SW-14, parte do firmware): janela de 5 leituras validas,
 // tolerancia de 1,5 cm e DESATUALIZADO pelo tMs do dispositivo. O modulo e
-// C++ puro, entao o .cpp real e incluido direto. Os casos de direcao e idade
-// vem de test/vetores/tendencia.csv, o mesmo arquivo que a API vai ler.
+// C++ puro, entao o .cpp real e incluido direto. Os casos de direcao, boot e
+// idade vem de test/vetores/tendencia.csv, o mesmo arquivo que a API vai ler.
+//
+// Regra de boot: o chamador informa o boot atual (bootIdAtual). So as leituras
+// dele entram na janela. seq e tMs recomecam a cada boot e NAO sao comparaveis
+// entre boots, nem mesmo quando um registro de boot antigo chega depois.
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -9,6 +13,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -43,17 +48,9 @@ static std::string caminhoVetores() {
   return pasta + "/../vetores/tendencia.csv";
 }
 
-// Monta leituras em ordem de chegada: mesmo boot, seq crescente, 5 s entre elas.
-static std::vector<LeituraTendencia> montar(const std::vector<float>& niveis) {
-  std::vector<LeituraTendencia> v;
-  for (size_t i = 0; i < niveis.size(); i++) {
-    v.push_back(LeituraTendencia{1u, (uint32_t)i, (uint32_t)(i * SNAPSHOT_SIM_MS), niveis[i]});
-  }
-  return v;
-}
-
-static TendenciaLocal calcular(const std::vector<LeituraTendencia>& v, uint32_t agoraMs) {
-  return calcularTendenciaLocal(v.data(), v.size(), agoraMs, IDADE_MAX_SIM_MS);
+static TendenciaLocal calcular(const std::vector<LeituraTendencia>& v, uint32_t bootAtual,
+                               uint32_t agoraMs) {
+  return calcularTendenciaLocal(v.data(), v.size(), bootAtual, agoraMs, IDADE_MAX_SIM_MS);
 }
 
 static void testarConstantes() {
@@ -75,46 +72,73 @@ static void testarNomes() {
          "nome DESATUALIZADO");
 }
 
+// Quebra "a;b;c" em itens. Campo vazio = nenhum item.
+static std::vector<std::string> dividir(const std::string& texto, char sep) {
+  std::vector<std::string> itens;
+  if (texto.empty()) return itens;
+  size_t ini = 0;
+  while (ini <= texto.size()) {
+    size_t fim = texto.find(sep, ini);
+    if (fim == std::string::npos) fim = texto.size();
+    itens.push_back(texto.substr(ini, fim - ini));
+    ini = fim + 1;
+  }
+  return itens;
+}
+
 static void testarVetores() {
   std::ifstream arq(caminhoVetores());
   checar(arq.is_open(), "abre test/vetores/tendencia.csv");
   if (!arq.is_open()) return;
 
   std::string linha;
-  int casos = 0;
+  int casos = 0, casosDeBoot = 0;
   while (std::getline(arq, linha)) {
-    if (linha.empty() || linha[0] == '#' || linha.rfind("niveisCm,", 0) == 0) continue;
+    if (linha.empty() || linha[0] == '#' || linha.rfind("leituras,", 0) == 0) continue;
     size_t v1 = linha.find(',');
     size_t v2 = (v1 == std::string::npos) ? v1 : linha.find(',', v1 + 1);
-    if (v2 == std::string::npos) {
+    size_t v3 = (v2 == std::string::npos) ? v2 : linha.find(',', v2 + 1);
+    if (v3 == std::string::npos) {
       checar(false, "linha mal formada no CSV: " + linha);
       continue;
     }
-    std::string campoNiveis = linha.substr(0, v1);
-    long idadeSeg = std::strtol(linha.substr(v1 + 1, v2 - v1 - 1).c_str(), nullptr, 10);
+    uint32_t bootAtual = (uint32_t)std::strtoul(linha.substr(v1 + 1, v2 - v1 - 1).c_str(), nullptr, 10);
+    long idadeSeg = std::strtol(linha.substr(v2 + 1, v3 - v2 - 1).c_str(), nullptr, 10);
     TendenciaLocal esperado;
-    if (!lerTendencia(linha.substr(v2 + 1), &esperado)) {
+    if (!lerTendencia(linha.substr(v3 + 1), &esperado)) {
       checar(false, "tendencia desconhecida no CSV: " + linha);
       continue;
     }
 
-    std::vector<float> niveis;
-    size_t ini = 0;
-    while (!campoNiveis.empty() && ini <= campoNiveis.size()) {
-      size_t fim = campoNiveis.find(';', ini);
-      if (fim == std::string::npos) fim = campoNiveis.size();
-      niveis.push_back(std::strtof(campoNiveis.substr(ini, fim - ini).c_str(), nullptr));
-      ini = fim + 1;
+    // Cada boot tem seu proprio contador: seq e tMs recomecam em zero.
+    std::vector<LeituraTendencia> leituras;
+    std::map<uint32_t, uint32_t> contador;
+    std::map<uint32_t, uint32_t> ultimoTMs;
+    bool temOutroBoot = false;
+    for (const std::string& item : dividir(linha.substr(0, v1), ';')) {
+      uint32_t boot = 1;
+      std::string nivelTxt = item;
+      size_t doisPontos = item.find(':');
+      if (doisPontos != std::string::npos) {
+        boot = (uint32_t)std::strtoul(item.substr(0, doisPontos).c_str(), nullptr, 10);
+        nivelTxt = item.substr(doisPontos + 1);
+      }
+      if (boot != bootAtual) temOutroBoot = true;
+      uint32_t n = contador[boot]++;
+      uint32_t tMs = n * SNAPSHOT_SIM_MS;
+      ultimoTMs[boot] = tMs;
+      leituras.push_back(LeituraTendencia{boot, n, tMs, std::strtof(nivelTxt.c_str(), nullptr)});
     }
 
-    std::vector<LeituraTendencia> leituras = montar(niveis);
-    uint32_t tUltima = leituras.empty() ? 0 : leituras.back().tMs;
-    uint32_t agora = tUltima + (uint32_t)idadeSeg * 1000u;
-    TendenciaLocal obtido = calcular(leituras, agora);
+    uint32_t agora = ultimoTMs[bootAtual] + (uint32_t)idadeSeg * 1000u;
+    TendenciaLocal obtido = calcular(leituras, bootAtual, agora);
     checar(obtido == esperado, "csv: " + linha + " -> obtido " + nomeTendencia(obtido));
     casos++;
+    if (temOutroBoot) casosDeBoot++;
   }
   checar(casos >= 20, "CSV tem pelo menos 20 casos (tem " + std::to_string(casos) + ")");
+  checar(casosDeBoot >= 6, "CSV tem pelo menos 6 casos com mais de um boot (tem " +
+                               std::to_string(casosDeBoot) + ")");
 }
 
 // A ordem vem do seq, nao da posicao no vetor.
@@ -123,39 +147,56 @@ static void testarOrdemPorSeq() {
   std::vector<LeituraTendencia> v = {
       {1u, 4u, 20000u, 14.0f}, {1u, 2u, 10000u, 12.0f}, {1u, 0u, 0u, 10.0f},
       {1u, 3u, 15000u, 13.0f}, {1u, 1u, 5000u, 11.0f}};
-  checar(calcular(v, 20000u) == TendenciaLocal::SUBINDO,
+  checar(calcular(v, 1u, 20000u) == TendenciaLocal::SUBINDO,
          "ordem: leituras fora de ordem sao ordenadas por seq");
 }
 
 // seq com buracos (registros perdidos) continua ordenando normalmente.
 static void testarSeqComBuracos() {
   std::vector<LeituraTendencia> v = {
-      {1u, 0u, 0u, 10.0f},   {1u, 3u, 15000u, 11.0f},  {1u, 4u, 20000u, 12.0f},
+      {1u, 0u, 0u, 10.0f},     {1u, 3u, 15000u, 11.0f}, {1u, 4u, 20000u, 12.0f},
       {1u, 9u, 45000u, 13.0f}, {1u, 10u, 50000u, 14.0f}};
-  checar(calcular(v, 50000u) == TendenciaLocal::SUBINDO, "seq com buracos: ordena e calcula");
+  checar(calcular(v, 1u, 50000u) == TendenciaLocal::SUBINDO, "seq com buracos: ordena e calcula");
 }
 
-// Boot novo: seq recomeca e nao se compara com o boot anterior.
-static void testarTrocaDeBoot() {
+// seq do boot antigo MAIOR que o do boot novo: nao pode ganhar so por ser maior.
+static void testarSeqDoBootAntigoMaior() {
   std::vector<LeituraTendencia> v;
   for (uint32_t i = 0; i < 5; i++) {
-    v.push_back(LeituraTendencia{1u, 100u + i, i * SNAPSHOT_SIM_MS, 10.0f + (float)i});
+    v.push_back(LeituraTendencia{1u, 100u + i, 4000000u + i * SNAPSHOT_SIM_MS, 10.0f + (float)i});
   }
   for (uint32_t i = 0; i < 5; i++) {
     v.push_back(LeituraTendencia{2u, i, i * SNAPSHOT_SIM_MS, 10.0f});
   }
-  checar(calcular(v, 20000u) == TendenciaLocal::ESTAVEL,
-         "boot novo: so o boot atual entra na janela (boot 1 subia, boot 2 estavel)");
+  checar(calcular(v, 2u, 20000u) == TendenciaLocal::ESTAVEL,
+         "boot: seq maior do boot antigo nao vence (boot 1 subia, boot 2 estavel)");
+}
 
-  std::vector<LeituraTendencia> poucas(v.begin(), v.begin() + 5);
-  poucas.push_back(LeituraTendencia{2u, 0u, 0u, 10.0f});
-  poucas.push_back(LeituraTendencia{2u, 1u, 5000u, 10.0f});
-  checar(calcular(poucas, 5000u) == TendenciaLocal::INSUFICIENTE,
-         "boot novo: com menos de 5 leituras do boot atual e INSUFICIENTE");
+// tMs de boots diferentes nao se comparam: o boot antigo tinha muito uptime.
+static void testarTMsEntreBoots() {
+  std::vector<LeituraTendencia> v;
+  for (uint32_t i = 0; i < 5; i++) {
+    v.push_back(LeituraTendencia{1u, 100u + i, 4000000u + i * SNAPSHOT_SIM_MS, 10.0f});
+  }
+  for (uint32_t i = 0; i < 5; i++) {
+    v.push_back(LeituraTendencia{2u, i, i * SNAPSHOT_SIM_MS, 10.0f});
+  }
+  // Boot 2 atualizado (agora = 20 s, ultima leitura em 20 s). Misturar o tMs do
+  // boot 1 (4.000.000 ms) faria a idade parecer negativa ou gigante.
+  checar(calcular(v, 2u, 20000u) == TendenciaLocal::ESTAVEL,
+         "tMs: idade usa so o tMs do boot atual (boot atual atualizado)");
+  // Boot 2 velho (agora = 40 s, ultima leitura em 20 s => 20 s > 15 s).
+  checar(calcular(v, 2u, 40000u) == TendenciaLocal::DESATUALIZADO,
+         "tMs: idade usa so o tMs do boot atual (boot atual desatualizado)");
+  // Retardatario do boot antigo chegando por ultimo, com tMs enorme.
+  v.push_back(LeituraTendencia{1u, 105u, 4025000u, 10.0f});
+  checar(calcular(v, 2u, 20000u) == TendenciaLocal::ESTAVEL,
+         "tMs: retardatario do boot antigo nao altera a idade do boot atual");
 }
 
 static void testarEntradaVazia() {
-  checar(calcularTendenciaLocal(nullptr, 0, 0u, IDADE_MAX_SIM_MS) == TendenciaLocal::INSUFICIENTE,
+  checar(calcularTendenciaLocal(nullptr, 0, 1u, 0u, IDADE_MAX_SIM_MS) ==
+             TendenciaLocal::INSUFICIENTE,
          "entrada vazia (nullptr, n = 0) e INSUFICIENTE");
 }
 
@@ -165,7 +206,8 @@ int main() {
   testarVetores();
   testarOrdemPorSeq();
   testarSeqComBuracos();
-  testarTrocaDeBoot();
+  testarSeqDoBootAntigoMaior();
+  testarTMsEntreBoots();
   testarEntradaVazia();
 
   std::printf("\n%s\n", falhas == 0 ? "TODOS OS CENARIOS OK" : "HOUVE FALHAS");
