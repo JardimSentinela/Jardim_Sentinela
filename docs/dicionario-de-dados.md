@@ -64,6 +64,29 @@ a de maior `timestampDispositivo`; quando ele for nulo, usa-se `recebidoEm`
 | `ultimaLeituraEm` | ISO-8601 UTC    | Hora da leitura mais recente. **Alvo:** `timestampDispositivo` (ou `recebidoEm` se nulo). **Hoje:** devolve `recebidoEm` — ver seção 6 |
 | `totalLeituras`   | inteiro         | Quantidade de leituras do jardim                             |
 
+### 3.1 Campos de resposta de `GET /api/jardins/{id}/tendencia`
+
+[SCRUM-28] Detalhes, decisões e avisos em `docs/tendencia-nivel.md` e
+`docs/api-dashboard.md`. **Valores experimentais** (simulador), não calibrados para o
+hardware real.
+
+| Campo                             | Tipo         | Descrição                                                    |
+| --------------------------------- | ------------ | ------------------------------------------------------------ |
+| `jardimId`                        | string       | Id do jardim                                                 |
+| `tendencia`                       | string (enum)| `ENCHENDO`, `ESTAVEL`, `DRENANDO`, `INSUFICIENTE`, `INDETERMINADO` ou `DESATUALIZADO` |
+| `leiturasValidas`                 | inteiro      | Leituras usadas na janela (no máximo 5)                      |
+| `leiturasDescartadas`             | inteiro      | Leituras inválidas **examinadas** (não o total no banco)     |
+| `janelaLeituras`                  | inteiro      | Tamanho da janela (5)                                        |
+| `toleranciaCm`                    | decimal (cm) | Tolerância usada (configuração do backend)                   |
+| `confiabilidadeCronologia`        | string       | Sempre `"NAO_VALIDADA"` no MVP                               |
+| `semTimestampDispositivoNaJanela` | booleano     | Alguma leitura da janela não tem `timestampDispositivo`; sinal informativo |
+| `multiplosSensorId`               | booleano     | Mais de um `sensorId` na janela; sinal informativo           |
+| `ultimaRecepcaoEm`                | ISO-8601 UTC | Maior `recebidoEm` entre as leituras válidas (última **recepção**, não a idade da medição). `null` = atualidade desconhecida |
+
+Não existe `variacaoLiquidaCm` (com empates seria uma faixa). A **chave cronológica**
+da tendência é a mesma "leitura mais recente" desta seção:
+`COALESCE(timestampDispositivo, recebidoEm)`.
+
 ## 4. Campos do firmware que a API ignora
 
 `tipo` (`evento`, `snapshot`, `boot`), `seq`, `bootId`, `deltaTMs`,
@@ -76,7 +99,7 @@ a de maior `timestampDispositivo`; quando ele for nulo, usa-se `recebidoEm`
 | ------------------ | ---- | ---------------------------------------------- |
 | `PAYLOAD_INVALIDO` | 400  | campo ausente ou fora da regra                 |
 | `CORPO_ILEGIVEL`   | 400  | JSON inválido ou tipo errado                   |
-| `JARDIM_NAO_ENCONTRADO` | 404 | jardim sem nenhuma leitura (`GET /api/jardins/{id}` e `/leituras`) |
+| `JARDIM_NAO_ENCONTRADO` | 404 | jardim sem nenhuma leitura (`GET /api/jardins/{id}`, `/leituras` e `/tendencia`) |
 | (corpo vazio)      | 404  | leitura inexistente (`GET /api/leituras/{id}`) |
 
 Status de criação: **201** na primeira gravação; **200** no reenvio do mesmo
@@ -91,7 +114,8 @@ Cada linha "a implementar" vira item de teste (vermelho) e código na Sprint 3.
 | ---------------------------------------------------------------------------------- | ----------------- |
 | Requisição aceita `idJardim`/`idSensor`/`nivelAgua`/`timestamp` e os aliases       | implementado      |
 | Idempotência por `idJardim` + `idSensor` + `timestamp` (201 / 200)                   | implementado      |
-| Histórico e estado atual ordenados por `COALESCE(timestampDispositivo, recebidoEm)` | **a implementar** (hoje ordena por `recebidoEm`) |
+| Histórico e estado atual ordenados por `COALESCE(timestampDispositivo, recebidoEm)` | **a implementar** (hoje ordena por `recebidoEm`). Só a consulta **nova** da tendência (SCRUM-28) já usa a chave cronológica; a SW-06 e a SW-07 seguem em `recebidoEm` |
+| `GET /api/jardins/{id}/tendencia` (campos da seção 3.1)                             | implementado (SCRUM-28) |
 | `ultimaLeituraEm` = hora da leitura mais recente (regra acima)                      | **a implementar** (hoje devolve `recebidoEm`)    |
 | Validar `idJardim` com `^J\d{2}$` e `idSensor` com `^S\d{2}$` ou `jardim`          | **a implementar, só depois que o firmware migrar os ids** (ativar antes rejeita o firmware) |
 | Migrar ids legados (`jardim-centro-01`, `sensor-0N`) no firmware, testes e exemplos | **a implementar** (firmware é do time de hardware) |
