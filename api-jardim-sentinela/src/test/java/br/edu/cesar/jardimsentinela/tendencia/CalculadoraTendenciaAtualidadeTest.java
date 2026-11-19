@@ -43,7 +43,7 @@ class CalculadoraTendenciaAtualidadeTest {
     @Test
     void idadeExatamenteNoLimiteAindaEAtual() {
         // Cenário 23: 30 s exatos é atual.
-        assertEquals(Tendencia.ENCHENDO,
+        assertEquals(Tendencia.SUBINDO,
                 calcularEm(serie(10, 11, 12, 13, 14), LIMITE, ULTIMA.plusSeconds(30)).tendencia());
     }
 
@@ -60,7 +60,7 @@ class CalculadoraTendenciaAtualidadeTest {
 
         assertEquals(Tendencia.DESATUALIZADO,
                 calcularEm(serie(10, 11, 12, 13, 14), Duration.ofSeconds(5), agora).tendencia());
-        assertEquals(Tendencia.ENCHENDO,
+        assertEquals(Tendencia.SUBINDO,
                 calcularEm(serie(10, 11, 12, 13, 14), Duration.ofSeconds(10), agora).tendencia());
     }
 
@@ -74,7 +74,7 @@ class CalculadoraTendenciaAtualidadeTest {
                 leitura(13.0, 4), leitura(14.0, 5));
 
         assertEquals(
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 0, false, false, T0.plusSeconds(100)),
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 0, false, false, T0.plusSeconds(100)),
                 calcularEm(leituras, LIMITE, T0.plusSeconds(110)));
     }
 
@@ -101,7 +101,7 @@ class CalculadoraTendenciaAtualidadeTest {
     @Test
     void recepcaoNoFuturoDoAgoraNaoEDesatualizada() {
         // Proteção: diferença entre relógios (recebidoEm depois do "agora"): idade negativa.
-        assertEquals(Tendencia.ENCHENDO,
+        assertEquals(Tendencia.SUBINDO,
                 calcularEm(serie(10, 11, 12, 13, 14), LIMITE, ULTIMA.minusSeconds(10)).tendencia());
     }
 
@@ -120,7 +120,7 @@ class CalculadoraTendenciaAtualidadeTest {
                 new LeituraNivel(14.0, T0.plusSeconds(4), null, "S01"));
 
         assertEquals(
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 0, false, false, null),
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 0, false, false, null),
                 calcularEm(leituras, LIMITE, T0.plusSeconds(1000)));
     }
 

@@ -40,12 +40,12 @@ class CalculadoraTendenciaEmpatesTest {
                 leitura(10.0, 0), leitura(11.0, 1), leitura(12.0, 2), leitura(12.5, 2),
                 leitura(14.0, 3));
 
-        assertEquals(Tendencia.ENCHENDO, calcular(leituras).tendencia());
+        assertEquals(Tendencia.SUBINDO, calcular(leituras).tendencia());
     }
 
     @Test
     void empateNaPontaComEstadosDiferentesEIndeterminadoEIndependeDaOrdemDeEntrada() {
-        // Cenário 15: a última pode ser 14,0 (+4,0 ENCHENDO) ou 10,5 (+0,5 ESTAVEL).
+        // Cenário 15: a última pode ser 14,0 (+4,0 SUBINDO) ou 10,5 (+0,5 ESTAVEL).
         List<LeituraNivel> umaOrdem = List.of(
                 leitura(10.0, 0), leitura(11.0, 1), leitura(12.0, 2),
                 leitura(14.0, 3), leitura(10.5, 3));
@@ -61,19 +61,19 @@ class CalculadoraTendenciaEmpatesTest {
 
     @Test
     void empateNaPontaComMesmoEstadoEhCalculavel() {
-        // Cenário 16: a última pode ser 14,0 (+4,0) ou 13,0 (+3,0): as duas são ENCHENDO.
+        // Cenário 16: a última pode ser 14,0 (+4,0) ou 13,0 (+3,0): as duas são SUBINDO.
         List<LeituraNivel> leituras = List.of(
                 leitura(10.0, 0), leitura(11.0, 1), leitura(12.0, 2),
                 leitura(14.0, 3), leitura(13.0, 3));
 
-        assertEquals(Tendencia.ENCHENDO, calcular(leituras).tendencia());
+        assertEquals(Tendencia.SUBINDO, calcular(leituras).tendencia());
     }
 
     @Test
     void empateAtravessandoOCorteComEstadosDiferentesEIndeterminado() {
         // Cenário 17: a mais antiga (50@0) fica fora. As quatro mais novas ocupam quatro
         // vagas; a quinta vaga é de UMA entre 10,0 e 11,0 (empatadas em @1). Com última
-        // 12,0: +2,0 (ENCHENDO) ou +1,0 (ESTAVEL).
+        // 12,0: +2,0 (SUBINDO) ou +1,0 (ESTAVEL).
         List<LeituraNivel> leituras = List.of(
                 leitura(50.0, 0), leitura(10.0, 1), leitura(11.0, 1), leitura(10.5, 2),
                 leitura(11.0, 3), leitura(11.5, 4), leitura(12.0, 5));
@@ -85,13 +85,13 @@ class CalculadoraTendenciaEmpatesTest {
 
     @Test
     void empateAtravessandoOCorteComMesmoEstadoEhCalculavel() {
-        // Cenário 18: primeira 10,0 ou 10,5, última 14,0: +4,0 ou +3,5, ambas ENCHENDO.
+        // Cenário 18: primeira 10,0 ou 10,5, última 14,0: +4,0 ou +3,5, ambas SUBINDO.
         List<LeituraNivel> leituras = List.of(
                 leitura(50.0, 0), leitura(10.0, 1), leitura(10.5, 1), leitura(11.0, 2),
                 leitura(12.0, 3), leitura(13.0, 4), leitura(14.0, 5));
 
         assertEquals(
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 0, false, false, T0.plusSeconds(6)),
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 0, false, false, T0.plusSeconds(6)),
                 calcular(leituras));
     }
 
@@ -118,7 +118,7 @@ class CalculadoraTendenciaEmpatesTest {
 
     @Test
     void todasNoMesmoInstanteComAmplitudeAcimaDaToleranciaEIndeterminado() {
-        // Amplitude 1,6: a variação possível vai de -1,6 (DRENANDO) a +1,6 (ENCHENDO).
+        // Amplitude 1,6: a variação possível vai de -1,6 (DESCENDO) a +1,6 (SUBINDO).
         assertEquals(Tendencia.INDETERMINADO, calcular(mesmoInstante(10, 11.6, 10.7, 10, 11)).tendencia());
     }
 
@@ -156,7 +156,7 @@ class CalculadoraTendenciaEmpatesTest {
                 leitura(12.0, 3), leitura(13.0, 4), leitura(14.0, 5));
 
         ResultadoTendencia esperado =
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 0, false, true, T0.plusSeconds(6));
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 0, false, true, T0.plusSeconds(6));
         assertEquals(esperado, calcular(umaOrdem));
         assertEquals(esperado, calcular(ordemInversaNoEmpate));
     }

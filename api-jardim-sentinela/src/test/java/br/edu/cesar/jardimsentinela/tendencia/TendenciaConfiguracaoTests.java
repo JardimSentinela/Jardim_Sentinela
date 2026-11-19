@@ -22,7 +22,7 @@ import br.edu.cesar.jardimsentinela.repository.LeituraRepository;
 /**
  * [SCRUM-28][SW-14] Etapa 6, Bloco D: a configuração muda o resultado sem mudar código.
  * Com tolerância 0,5 cm e idade máxima de 5 s (os padrões são 1,5 cm e 30 s), uma variação
- * de 1,0 cm vira ENCHENDO e 6 s de silêncio já é DESATUALIZADO. A tolerância usada aparece
+ * de 1,0 cm vira SUBINDO e 6 s de silêncio já é DESATUALIZADO. A tolerância usada aparece
  * na resposta (transparência sobre o parâmetro experimental).
  */
 @SpringBootTest
@@ -61,14 +61,14 @@ class TendenciaConfiguracaoTests {
         mvc.perform(get("/api/jardins/J01/tendencia"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.toleranciaCm").value(0.5))
-                .andExpect(jsonPath("$.tendencia").value("ENCHENDO"));   // com 1,5 seria ESTAVEL
+                .andExpect(jsonPath("$.tendencia").value("SUBINDO"));   // com 1,5 seria ESTAVEL
     }
 
     @Test
     void idadeMaximaConfiguradaMudaOLimiteDeDesatualizado() throws Exception {
         relogio.definir(T0.plusSeconds(5).plus(Duration.ofSeconds(5)));   // 5 s exatos: atual
         mvc.perform(get("/api/jardins/J01/tendencia"))
-                .andExpect(jsonPath("$.tendencia").value("ENCHENDO"));
+                .andExpect(jsonPath("$.tendencia").value("SUBINDO"));
 
         relogio.definir(T0.plusSeconds(5).plus(Duration.ofSeconds(6)));   // 6 s: com 30 s seria atual
         mvc.perform(get("/api/jardins/J01/tendencia"))

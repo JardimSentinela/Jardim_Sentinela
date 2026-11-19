@@ -33,7 +33,7 @@ class CalculadoraTendenciaCronologiaTest {
                 semTimestamp(11.0, 1), semTimestamp(13.0, 3));
 
         assertEquals(
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 0, true, false, T0.plusSeconds(4)),
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 0, true, false, T0.plusSeconds(4)),
                 calcular(embaralhada));
     }
 
@@ -46,7 +46,7 @@ class CalculadoraTendenciaCronologiaTest {
                 semTimestamp(11.0, 3), semTimestamp(14.0, 0), semTimestamp(10.0, 4),
                 semTimestamp(12.0, 2), semTimestamp(13.0, 1));
 
-        assertEquals(Tendencia.DRENANDO, calcular(direta).tendencia());
+        assertEquals(Tendencia.DESCENDO, calcular(direta).tendencia());
         assertEquals(calcular(direta), calcular(embaralhada));
     }
 
@@ -64,10 +64,10 @@ class CalculadoraTendenciaCronologiaTest {
                 new LeituraNivel(16.0, T0.plusSeconds(2), T0.plusSeconds(13), "S01"),
                 new LeituraNivel(12.0, T0.plusSeconds(3), T0.plusSeconds(14), "S01"));
 
-        // Pela ordem de chegada seria 12 - 8 = +4 (ENCHENDO, errado). Pela medição,
+        // Pela ordem de chegada seria 12 - 8 = +4 (SUBINDO, errado). Pela medição,
         // 8 - 24 = -16.
         assertEquals(
-                new ResultadoTendencia(Tendencia.DRENANDO, 5, 0, false, false, T0.plusSeconds(14)),
+                new ResultadoTendencia(Tendencia.DESCENDO, 5, 0, false, false, T0.plusSeconds(14)),
                 calcular(leituras));
     }
 
@@ -84,7 +84,7 @@ class CalculadoraTendenciaCronologiaTest {
                 new LeituraNivel(13.0, T0.plusSeconds(4), T0.plusSeconds(5), "S01"));
 
         assertEquals(
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 0, true, false, T0.plusSeconds(30)),
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 0, true, false, T0.plusSeconds(30)),
                 calcular(leituras));
     }
 
@@ -94,7 +94,7 @@ class CalculadoraTendenciaCronologiaTest {
     void comMaisDeCincoValidasUsaSoAsCincoMaisRecentes() {
         // Cenário 11: a mais antiga (100) é outlier e não pode entrar na conta.
         assertEquals(
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 0, false, false, T0.plusSeconds(6)),
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 0, false, false, T0.plusSeconds(6)),
                 calcular(serie(100, 10, 11, 12, 13, 14)));
     }
 
@@ -109,7 +109,7 @@ class CalculadoraTendenciaCronologiaTest {
                 leitura(13.0, 4), leitura(14.0, 5));
 
         assertEquals(
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 0, false, false, T0.plusSeconds(6)),
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 0, false, false, T0.plusSeconds(6)),
                 calcular(leituras));
     }
 
@@ -123,7 +123,7 @@ class CalculadoraTendenciaCronologiaTest {
                 leitura(-1.0, 7), leitura(14.0, 8));
 
         assertEquals(
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 4, false, false, T0.plusSeconds(9)),
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 4, false, false, T0.plusSeconds(9)),
                 calcular(leituras));
     }
 }

@@ -91,9 +91,9 @@ class TendenciaEndpointTests {
     // ---- os seis estados, todos com HTTP 200 ----
 
     @Test
-    void enchendo() throws Exception {
+    void subindo() throws Exception {
         gravarSerie(10, 11, 12, 13, 14);
-        tendencia().andExpect(status().isOk()).andExpect(jsonPath("$.tendencia").value("ENCHENDO"));
+        tendencia().andExpect(status().isOk()).andExpect(jsonPath("$.tendencia").value("SUBINDO"));
     }
 
     @Test
@@ -103,9 +103,9 @@ class TendenciaEndpointTests {
     }
 
     @Test
-    void drenando() throws Exception {
+    void descendo() throws Exception {
         gravarSerie(14, 13, 12, 11, 10);
-        tendencia().andExpect(status().isOk()).andExpect(jsonPath("$.tendencia").value("DRENANDO"));
+        tendencia().andExpect(status().isOk()).andExpect(jsonPath("$.tendencia").value("DESCENDO"));
     }
 
     @Test
@@ -118,7 +118,7 @@ class TendenciaEndpointTests {
 
     @Test
     void indeterminado() throws Exception {
-        // Empate na última posição (@3): 14,0 (+4,0 ENCHENDO) ou 10,5 (+0,5 ESTAVEL).
+        // Empate na última posição (@3): 14,0 (+4,0 SUBINDO) ou 10,5 (+0,5 ESTAVEL).
         gravar("S01", 10.0, 0);
         gravar("S01", 11.0, 1);
         gravar("S01", 12.0, 2);
@@ -153,7 +153,7 @@ class TendenciaEndpointTests {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.length()").value(10))
                 .andExpect(jsonPath("$.jardimId").value("J01"))
-                .andExpect(jsonPath("$.tendencia").value("ENCHENDO"))
+                .andExpect(jsonPath("$.tendencia").value("SUBINDO"))
                 .andExpect(jsonPath("$.leiturasValidas").value(5))
                 .andExpect(jsonPath("$.leiturasDescartadas").value(0))
                 .andExpect(jsonPath("$.janelaLeituras").value(5))
@@ -174,7 +174,7 @@ class TendenciaEndpointTests {
         }
 
         tendencia().andExpect(status().isOk())
-                .andExpect(jsonPath("$.tendencia").value("ENCHENDO"))
+                .andExpect(jsonPath("$.tendencia").value("SUBINDO"))
                 .andExpect(jsonPath("$.length()").value(10))
                 .andExpect(content().string(containsString("\"ultimaRecepcaoEm\":null")));
     }
@@ -206,7 +206,7 @@ class TendenciaEndpointTests {
         gravar("S01", 14.0, 8);
 
         tendencia().andExpect(status().isOk())
-                .andExpect(jsonPath("$.tendencia").value("ENCHENDO"))
+                .andExpect(jsonPath("$.tendencia").value("SUBINDO"))
                 .andExpect(jsonPath("$.leiturasValidas").value(5))
                 .andExpect(jsonPath("$.leiturasDescartadas").value(4));
     }
@@ -241,7 +241,7 @@ class TendenciaEndpointTests {
         relogio.definir(ultimaRecepcaoGravada().plusSeconds(1));
 
         tendencia().andExpect(status().isOk())
-                .andExpect(jsonPath("$.tendencia").value("ENCHENDO"))
+                .andExpect(jsonPath("$.tendencia").value("SUBINDO"))
                 .andExpect(jsonPath("$.leiturasValidas").value(5))
                 .andExpect(jsonPath("$.confiabilidadeCronologia").value("NAO_VALIDADA"));
     }
@@ -258,7 +258,7 @@ class TendenciaEndpointTests {
         relogio.definir(ultimaRecepcaoGravada().plusSeconds(1));
 
         tendencia().andExpect(status().isOk())
-                .andExpect(jsonPath("$.tendencia").value("ENCHENDO"))
+                .andExpect(jsonPath("$.tendencia").value("SUBINDO"))
                 .andExpect(jsonPath("$.semTimestampDispositivoNaJanela").value(true));
     }
 
@@ -272,7 +272,7 @@ class TendenciaEndpointTests {
         Instant ultima = ultimaRecepcaoGravada();
 
         relogio.definir(ultima.plusSeconds(30));
-        tendencia().andExpect(jsonPath("$.tendencia").value("ENCHENDO"));      // 30 s exatos: atual
+        tendencia().andExpect(jsonPath("$.tendencia").value("SUBINDO"));      // 30 s exatos: atual
 
         relogio.avancar(Duration.ofNanos(1));
         tendencia().andExpect(status().isOk())

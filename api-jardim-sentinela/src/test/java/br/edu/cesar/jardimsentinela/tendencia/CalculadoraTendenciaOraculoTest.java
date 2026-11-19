@@ -61,8 +61,8 @@ class CalculadoraTendenciaOraculoTest {
         }
 
         // O teste só vale se o sorteio exercitou todos os desfechos: confere a cobertura.
-        for (Tendencia tendencia : List.of(Tendencia.ENCHENDO, Tendencia.ESTAVEL,
-                Tendencia.DRENANDO, Tendencia.INDETERMINADO)) {
+        for (Tendencia tendencia : List.of(Tendencia.SUBINDO, Tendencia.ESTAVEL,
+                Tendencia.DESCENDO, Tendencia.INDETERMINADO)) {
             assertTrue(contagem.getOrDefault(tendencia, 0) >= 50,
                     "o sorteio quase não exercitou " + tendencia + ": " + contagem);
         }
@@ -121,10 +121,10 @@ class CalculadoraTendenciaOraculoTest {
     private static Tendencia classificar(BigDecimal variacao) {
         BigDecimal tolerancia = BigDecimal.valueOf(TOLERANCIA);
         if (variacao.compareTo(tolerancia) > 0) {
-            return Tendencia.ENCHENDO;
+            return Tendencia.SUBINDO;
         }
         if (variacao.compareTo(tolerancia.negate()) < 0) {
-            return Tendencia.DRENANDO;
+            return Tendencia.DESCENDO;
         }
         return Tendencia.ESTAVEL;
     }

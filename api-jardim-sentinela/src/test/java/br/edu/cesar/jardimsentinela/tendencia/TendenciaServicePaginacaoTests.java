@@ -94,7 +94,7 @@ class TendenciaServicePaginacaoTests {
 
         // Só vale se o sorteio exercitou os desfechos que importam: confere a cobertura.
         for (Tendencia tendencia : List.of(Tendencia.INSUFICIENTE, Tendencia.INDETERMINADO,
-                Tendencia.ENCHENDO, Tendencia.ESTAVEL, Tendencia.DRENANDO)) {
+                Tendencia.SUBINDO, Tendencia.ESTAVEL, Tendencia.DESCENDO)) {
             assertTrue(cobertura.getOrDefault(tendencia, 0) >= 15,
                     "o sorteio quase não exercitou " + tendencia + ": " + cobertura);
         }

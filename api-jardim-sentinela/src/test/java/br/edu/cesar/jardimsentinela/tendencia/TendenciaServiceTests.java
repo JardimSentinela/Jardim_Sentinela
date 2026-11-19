@@ -77,13 +77,13 @@ class TendenciaServiceTests {
     }
 
     @Test
-    void cincoLeiturasSubindoDevolvemEnchendoComOContextoDaResposta() {
+    void cincoLeiturasSubindoDevolvemSubindoComOContextoDaResposta() {
         for (int i = 0; i < 5; i++) {
             salvar(10.0 + i, i);
         }
 
         assertEquals(
-                new TendenciaResponse("J01", Tendencia.ENCHENDO, 5, 0, 5, 1.5, "NAO_VALIDADA",
+                new TendenciaResponse("J01", Tendencia.SUBINDO, 5, 0, 5, 1.5, "NAO_VALIDADA",
                         false, false, T0.plusSeconds(5)),
                 calcular());
     }
@@ -104,7 +104,7 @@ class TendenciaServiceTests {
 
         TendenciaResponse resposta = calcular();
 
-        assertEquals(Tendencia.ENCHENDO, resposta.tendencia());
+        assertEquals(Tendencia.SUBINDO, resposta.tendencia());
         assertEquals(5, resposta.leiturasValidas());
         assertEquals(6, resposta.leiturasDescartadas());
     }
@@ -152,8 +152,8 @@ class TendenciaServiceTests {
         // Cuidado 1. Grupo empatado em T0 com 5 leituras: 20, 10, 12,5, 13 e 12,8 (nessa
         // ordem de gravação, então ids crescentes). Mais 13 em T0+1 e 14 em T0+2. A janela
         // são as 5 mais recentes: 14, 13 e TRÊS do grupo, sem saber quais. A primeira
-        // leitura pode ser qualquer uma do grupo: 14-20 = -6 (DRENANDO) ou 14-10 = +4
-        // (ENCHENDO). Com uma margem fixa (só 5 linhas), a busca veria 12,8, 13 e 12,5 e
+        // leitura pode ser qualquer uma do grupo: 14-20 = -6 (DESCENDO) ou 14-10 = +4
+        // (SUBINDO). Com uma margem fixa (só 5 linhas), a busca veria 12,8, 13 e 12,5 e
         // concluiria ESTAVEL, errado. Com páginas de 2, o grupo ocupa as páginas 1 a 3.
         Instant t0 = T0;
         salvar("S01", 20.0, t0, t0.plusSeconds(10));
@@ -183,7 +183,7 @@ class TendenciaServiceTests {
 
         TendenciaResponse resposta = calcular();
 
-        assertEquals(Tendencia.ENCHENDO, resposta.tendencia());   // janela: 5..9
+        assertEquals(Tendencia.SUBINDO, resposta.tendencia());   // janela: 5..9
         verify(repository, times(3)).findHistoricoPorChaveCronologica(eq("J01"), any(Pageable.class));
     }
 
@@ -197,7 +197,7 @@ class TendenciaServiceTests {
         salvar("S01", 16.0, T0.plusSeconds(2), T0.plusSeconds(13));
         salvar("S01", 12.0, T0.plusSeconds(3), T0.plusSeconds(14));
 
-        assertEquals(Tendencia.DRENANDO, calcular().tendencia());
+        assertEquals(Tendencia.DESCENDO, calcular().tendencia());
     }
 
     @Test
@@ -205,8 +205,8 @@ class TendenciaServiceTests {
         // O cenário do doc (seção 7.1) com mais de 5 leituras: a fila offline envia primeiro
         // o snapshot mais recente (T0+6, nível 14) e depois os eventos, do mais antigo ao
         // mais novo. Pela ordem de recebimento o snapshot seria o MAIS ANTIGO; ordenar por
-        // recebidoEm e parar cedo escolheria a janela errada (29 a 13, DRENANDO). Pela
-        // medição, a janela são as 5 mais recentes (T0+2 a T0+6): 10 a 14, ENCHENDO.
+        // recebidoEm e parar cedo escolheria a janela errada (29 a 13, DESCENDO). Pela
+        // medição, a janela são as 5 mais recentes (T0+2 a T0+6): 10 a 14, SUBINDO.
         salvar("S01", 14.0, T0.plusSeconds(6), T0.plusSeconds(10));    // snapshot, chegou 1º
         salvar("S01", 30.0, T0.plusSeconds(0), T0.plusSeconds(11));
         salvar("S01", 29.0, T0.plusSeconds(1), T0.plusSeconds(12));
@@ -215,7 +215,7 @@ class TendenciaServiceTests {
         salvar("S01", 12.0, T0.plusSeconds(4), T0.plusSeconds(15));
         salvar("S01", 13.0, T0.plusSeconds(5), T0.plusSeconds(16));
 
-        assertEquals(Tendencia.ENCHENDO, calcular().tendencia());
+        assertEquals(Tendencia.SUBINDO, calcular().tendencia());
     }
 
     @Test
@@ -228,7 +228,7 @@ class TendenciaServiceTests {
 
         TendenciaResponse resposta = calcular();
 
-        assertEquals(Tendencia.ENCHENDO, resposta.tendencia());
+        assertEquals(Tendencia.SUBINDO, resposta.tendencia());
         assertTrue(resposta.semTimestampDispositivoNaJanela());
     }
 
@@ -251,7 +251,7 @@ class TendenciaServiceTests {
         Instant ultimaRecepcao = T0.plusSeconds(5);
 
         relogio.definir(ultimaRecepcao.plus(Duration.ofSeconds(30)));
-        assertEquals(Tendencia.ENCHENDO, calcular().tendencia(), "30 s exatos ainda é atual");
+        assertEquals(Tendencia.SUBINDO, calcular().tendencia(), "30 s exatos ainda é atual");
 
         relogio.avancar(Duration.ofNanos(1));
         assertEquals(Tendencia.DESATUALIZADO, calcular().tendencia(), "acima de 30 s é desatualizado");

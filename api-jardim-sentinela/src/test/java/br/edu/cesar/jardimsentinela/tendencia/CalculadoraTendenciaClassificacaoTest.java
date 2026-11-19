@@ -11,7 +11,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * [SCRUM-28][SW-14] Bloco B: classificação em ENCHENDO, ESTAVEL e DRENANDO pela variação
+ * [SCRUM-28][SW-14] Bloco B: classificação em SUBINDO, ESTAVEL e DESCENDO pela variação
  * líquida (última menos primeira) comparada à tolerância, com limite inclusivo.
  * Níveis de cada série em ordem cronológica; N = 5.
  */
@@ -26,17 +26,17 @@ class CalculadoraTendenciaClassificacaoTest {
     }
 
     @Test
-    void cincoLeiturasSubindoDevolvemEnchendoComOResultadoCompleto() {
+    void cincoLeiturasSubindoDevolvemSubindoComOResultadoCompleto() {
         // Cenário 1. Última recepção: leitura em T0 + 4 s, recebida 1 s depois.
         assertEquals(
-                new ResultadoTendencia(Tendencia.ENCHENDO, 5, 0, false, false, T0.plusSeconds(5)),
+                new ResultadoTendencia(Tendencia.SUBINDO, 5, 0, false, false, T0.plusSeconds(5)),
                 calcular(serie(10, 11, 12, 13, 14)));
     }
 
     @Test
-    void cincoLeiturasDescendoDevolvemDrenando() {
+    void cincoLeiturasDescendoDevolvemDescendo() {
         // Cenário 2
-        assertEquals(Tendencia.DRENANDO, tendencia(14, 13, 12, 11, 10));
+        assertEquals(Tendencia.DESCENDO, tendencia(14, 13, 12, 11, 10));
     }
 
     @Test
@@ -61,8 +61,8 @@ class CalculadoraTendenciaClassificacaoTest {
     @Test
     void variacaoAcimaDaToleranciaClassificaNosDoisSentidos() {
         // Cenário 6
-        assertEquals(Tendencia.ENCHENDO, tendencia(10, 10, 10, 10, 11.6));  // +1,6
-        assertEquals(Tendencia.DRENANDO, tendencia(11.6, 10, 10, 10, 10));  // -1,6
+        assertEquals(Tendencia.SUBINDO, tendencia(10, 10, 10, 10, 11.6));  // +1,6
+        assertEquals(Tendencia.DESCENDO, tendencia(11.6, 10, 10, 10, 10));  // -1,6
     }
 
     @Test
@@ -91,9 +91,9 @@ class CalculadoraTendenciaClassificacaoTest {
 
     @Test
     void variacaoRealmenteAcimaDaToleranciaDecimalAindaClassifica() {
-        assertEquals(Tendencia.ENCHENDO,
+        assertEquals(Tendencia.SUBINDO,
                 LeiturasDeTeste.calcular(serie(1.0, 1.0, 1.0, 1.0, 1.2), 0.1).tendencia());
-        assertEquals(Tendencia.DRENANDO,
+        assertEquals(Tendencia.DESCENDO,
                 LeiturasDeTeste.calcular(serie(1.2, 1.0, 1.0, 1.0, 1.0), 0.1).tendencia());
     }
 
