@@ -24,6 +24,10 @@ public interface LeituraRepository extends JpaRepository<Leitura, Long> {
             """)
     List<Leitura> findHistorico(@Param("jardimId") String jardimId, Pageable pageable);
 
+    /** [SCRUM-20][SW-11] Jardins que já enviaram ao menos uma leitura, em ordem de id. */
+    @Query("select distinct l.jardimId from Leitura l order by l.jardimId")
+    List<String> findJardimIdsComLeitura();
+
     boolean existsByJardimId(String jardimId);
 
     long countByJardimId(String jardimId);
