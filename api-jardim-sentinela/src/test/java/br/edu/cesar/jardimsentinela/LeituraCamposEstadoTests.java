@@ -124,14 +124,14 @@ class LeituraCamposEstadoTests {
     }
 
     @Test
-    void estadoAtualDoJardimTrazEstadoDoRegistroETendenciaNula() throws Exception {
+    void estadoAtualDoJardimTrazEstadoDoRegistroETendenciaCalculada() throws Exception {
         enviar(",\"estado\":\"ENCHENDO\"").andExpect(status().isCreated());
 
         mvc.perform(get("/api/jardins/J01"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.estado").value("ENCHENDO"))
-                // tendência calculada pela API: entra na Tarefa B; o campo já existe, ainda nulo.
-                .andExpect(jsonPath("$.tendencia").value(nullValue()));
+                // tendência calculada pela API (SW-14): com 1 leitura, menos que as 5 da janela.
+                .andExpect(jsonPath("$.tendencia").value("INSUFICIENTE"));
     }
 
     @Test

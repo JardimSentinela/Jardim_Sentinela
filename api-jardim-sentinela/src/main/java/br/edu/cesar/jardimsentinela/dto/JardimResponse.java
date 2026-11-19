@@ -13,11 +13,11 @@ public record JardimResponse(
         long totalLeituras,
         /** Estado do registro mais recente, como o dispositivo enviou. Nulo = sem classificação. */
         String estado,
-        /** Tendência calculada pela API. Nulo até a Tarefa B (SW-14). */
+        /** Tendência calculada pela API (mesma regra de GET /api/jardins/{id}/tendencia). */
         String tendencia
 ) {
 
-    public static JardimResponse de(Leitura ultima, long totalLeituras) {
+    public static JardimResponse de(Leitura ultima, long totalLeituras, String tendencia) {
         return new JardimResponse(
                 ultima.getJardimId(),
                 ultima.getSensorId(),
@@ -26,6 +26,6 @@ public record JardimResponse(
                 ultima.getTimestampDispositivo() != null ? ultima.getTimestampDispositivo() : ultima.getRecebidoEm(),
                 totalLeituras,
                 ultima.getEstado(),
-                null);
+                tendencia);
     }
 }
