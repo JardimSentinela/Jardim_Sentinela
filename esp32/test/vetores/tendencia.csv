@@ -1,0 +1,53 @@
+# Vetores da tendencia local (decisoes-tecnicas §5.2). PROVISORIO.
+# Formato: niveisCm,idadeSegundos,esperado
+#   niveisCm      leituras em ordem de chegada, separadas por ';' (cm).
+#                 "nan", "inf" e negativos sao leituras INVALIDAS (ignoradas).
+#                 Campo vazio = nenhuma leitura.
+#   idadeSegundos idade da ULTIMA leitura da lista, medida ate "agora".
+#   Cada leitura chega 5 s depois da anterior (snapshot da simulacao).
+# Parametros do vetor: janela N = 5 leituras validas, tolerancia 1,5 cm,
+# idade maxima 15 s (3 x 5 s). Idade exatamente igual a maxima NAO e velha.
+# Precedencia: INSUFICIENTE > DESATUALIZADO > INDETERMINADO > direcao.
+# O mesmo arquivo deve ser lido pelo teste da API (Tarefa B).
+niveisCm,idadeSegundos,esperado
+
+# --- poucas leituras: INSUFICIENTE ---
+,0,INSUFICIENTE
+10,0,INSUFICIENTE
+10;11;12;13,0,INSUFICIENTE
+10;11;12;13,100,INSUFICIENTE
+
+# --- direcao com 5 leituras ---
+10;10;10;10;10,0,ESTAVEL
+10;11;12;13;14,0,SUBINDO
+14;13;12;11;10,0,DESCENDO
+
+# --- tolerancia de 1,5 cm: exatamente 1,5 e ESTAVEL ---
+10;10;10;10;11.5,0,ESTAVEL
+10;10;10;10;11.6,0,SUBINDO
+11.5;11.5;11.5;11.5;10,0,ESTAVEL
+11.6;11.6;11.6;11.6;10,0,DESCENDO
+
+# --- ESTAVEL nao significa nivel parado: so a variacao liquida conta ---
+10;14;8;12;10.5,0,ESTAVEL
+
+# --- so as 5 ultimas leituras validas entram na janela ---
+1;2;3;4;5;5;5;5;5,0,ESTAVEL
+20;20;20;20;20;19;18;17;16,0,DESCENDO
+
+# --- leituras invalidas ---
+10;nan;11;12;13;14,0,SUBINDO
+10;-1;11;12;13,0,INSUFICIENTE
+10;inf;11;12;13,0,INSUFICIENTE
+nan;-1;nan;-2;nan,0,INSUFICIENTE
+nan;-1;nan;-2;nan,100,INSUFICIENTE
+
+# --- DESATUALIZADO: idade da ultima leitura acima de 15 s ---
+10;11;12;13;14,15,SUBINDO
+10;11;12;13;14,16,DESATUALIZADO
+10;10;10;10;10,16,DESATUALIZADO
+14;13;12;11;10,100,DESATUALIZADO
+
+# --- a idade conta a ultima leitura VALIDA, nao uma invalida mais recente ---
+10;11;12;13;14;nan,0,SUBINDO
+10;11;12;13;14;nan,11,DESATUALIZADO

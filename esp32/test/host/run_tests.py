@@ -88,6 +88,7 @@ TESTS = [
     ("backoff", "test_backoff.cpp", ["backoff"]),
     ("sonda", "test_sonda.cpp", []),
     ("estado_fisico", "test_estado_fisico.cpp", []),
+    ("tendencia_local", "test_tendencia_local.cpp", []),
 ]
 
 START_RE = re.compile(
