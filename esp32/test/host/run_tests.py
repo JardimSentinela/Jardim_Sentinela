@@ -102,6 +102,7 @@ TESTS = [
     ("estado_fisico", "test_estado_fisico.cpp", []),
     ("tendencia_local", "test_tendencia_local.cpp", []),
     ("gateway", "test_gateway.cpp", ["iso", "anexar", "gateway", "rejeicao"]),
+    ("sinalizacao", "test_sinalizacao.cpp", []),
 ]
 
 START_RE = re.compile(
