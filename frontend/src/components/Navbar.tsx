@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { CalendarDays, Clock3, Flower2, Moon, Sun } from 'lucide-react'
+import { CalendarDays, Clock3, Moon, Sun } from 'lucide-react'
+import logo1 from '../../assets/logo1.svg'
 
 export type AbaPainel = 'jardim' | 'cop'
 
@@ -54,7 +55,7 @@ export default function Navbar({
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-4 py-4 lg:grid lg:grid-cols-[1fr_auto_1fr]">
           <div className="flex items-center gap-4">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#071d41] text-white">
-              <Flower2 className="h-5 w-5" aria-hidden="true" />
+              <img src={logo1} alt="Logo Jardim Sentinela" className="h-5 w-5" />
             </span>
             <div>
               <div className="font-display text-lg font-bold leading-tight">
