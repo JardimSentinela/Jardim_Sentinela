@@ -225,6 +225,29 @@ int main() {
   checar(!codec::decodificar(ruim, tam, &d), "rejeita flags invalidas");
   checar(!codec::decodificar(buf, tam - 1, &d), "rejeita quadro truncado");
 
+  // Motivo da rejeicao: so a versao conta para o contador de quadros rejeitados.
+  codec::MotivoRejeicao motivo = codec::MotivoRejeicao::NENHUM;
+  checar(codec::decodificar(buf, tam, &d, &motivo) && motivo == codec::MotivoRejeicao::NENHUM,
+         "quadro valido: motivo NENHUM");
+  for (uint8_t v : {(uint8_t)0x00, (uint8_t)0x01, (uint8_t)0x03, (uint8_t)0xFF}) {
+    std::memcpy(ruim, buf, tam);
+    ruim[0] = v;
+    motivo = codec::MotivoRejeicao::NENHUM;
+    char nome[64];
+    std::snprintf(nome, sizeof(nome), "versao 0x%02X rejeitada com motivo VERSAO", v);
+    checar(!codec::decodificar(ruim, tam, &d, &motivo) && motivo == codec::MotivoRejeicao::VERSAO, nome);
+  }
+  std::memcpy(ruim, buf, tam);
+  ruim[3] = 0;
+  motivo = codec::MotivoRejeicao::NENHUM;
+  checar(!codec::decodificar(ruim, tam, &d, &motivo) && motivo == codec::MotivoRejeicao::OUTRO,
+         "n=0 rejeitado com motivo OUTRO (nao e versao)");
+  motivo = codec::MotivoRejeicao::NENHUM;
+  checar(!codec::decodificar(buf, tam - 1, &d, &motivo) && motivo == codec::MotivoRejeicao::OUTRO,
+         "quadro truncado rejeitado com motivo OUTRO");
+  checar(!codec::decodificar(nullptr, 0, &d, &motivo) && motivo == codec::MotivoRejeicao::OUTRO,
+         "ponteiro nulo rejeitado com motivo OUTRO");
+
   codec::Quadro inv = q;
   inv.regs[0].bateria = 101;
   checar(codec::tamanho(inv) == 0, "rejeita bateria > 100");

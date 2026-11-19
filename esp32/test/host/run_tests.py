@@ -74,6 +74,17 @@ GROUPS = {
         "buscarBackfill",
         "selecionarLote",
     ],
+    "iso": ["parsearIso", "formatarIso"],
+    "anexar": ["anexar"],
+    "gateway": [
+        "valorCampo",
+        "campoTxt",
+        "campoU32",
+        "campoDouble",
+        "montarQuadroDaLinha",
+        "montarJsonGateway",
+    ],
+    "rejeicao": [],
     "url": ["alternarUrlInvalida"],
     "backoff": ["backoffMs", "backoff429Ms", "agendarNovaTentativa"],
 }
@@ -89,6 +100,7 @@ TESTS = [
     ("sonda", "test_sonda.cpp", []),
     ("estado_fisico", "test_estado_fisico.cpp", []),
     ("tendencia_local", "test_tendencia_local.cpp", []),
+    ("gateway", "test_gateway.cpp", ["iso", "anexar", "gateway", "rejeicao"]),
 ]
 
 START_RE = re.compile(
