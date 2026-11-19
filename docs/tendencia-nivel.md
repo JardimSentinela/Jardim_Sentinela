@@ -1,10 +1,13 @@
 # SW-14 — Identificar tendência de nível (SCRUM-28)
 
-> **Estado deste documento (2026-11-17):** registra as **decisões de domínio e técnicas
-> fechadas**. A implementação está **em andamento**: até aqui só o enum `Tendencia`
-> existe no código. Tudo o que está descrito abaixo como "contrato planejado",
-> "consulta" ou "função pura" é **planejado, não implementado**. O andamento está em
-> [`SCRUM-28-handoff.md`](SCRUM-28-handoff.md).
+> **Estado deste documento (atualizado em 2026-11-19):** registra as **decisões de
+> domínio e técnicas fechadas**. A implementação está **em andamento**. **Implementado e
+> testado:** o enum `Tendencia`, os records `LeituraNivel` e `ResultadoTendencia` e a
+> **função pura `CalculadoraTendencia`** (validação, janela, classificação, empates,
+> atualidade e precedência), desenvolvida com TDD (ver seção 14). **Ainda planejado, não
+> implementado:** a consulta no repositório, o serviço, o controller, o DTO, as
+> propriedades de configuração, o `Clock` e o endpoint (seções 11 e 12). O andamento está
+> em [`SCRUM-28-handoff.md`](SCRUM-28-handoff.md).
 
 Legenda de certeza usada neste documento: **[Certo]** confirmado no código ou nos
 dados, **[Provável]** inferência técnica, **[Suposição]** proposta ainda não validada,
@@ -44,12 +47,12 @@ consecutivas e retorna resultado consistente.
 | D7 | Cronologia (C1) | `timestampDispositivo`, com `recebidoEm` quando ausente; **nunca** afirmada como validada |
 | D8 | Empates (A3) | Empate = conjunto de possibilidades; sem desempate por `id` ou por nível |
 | D9 | Série (F1) | Uma série por jardim, todas as leituras, sem tendência por sensor |
-| D10 | Leitura válida | `nivelCm` não nulo, finito e `>= 0`; inválidas são descartadas e contadas |
+| D10 | Leitura válida | `nivelCm` não nulo, finito e `>= 0`, **e** com alguma referência temporal (`timestampDispositivo` ou `recebidoEm`); inválidas são descartadas e contadas |
 | D11 | Histórico insuficiente | Menos de 5 leituras válidas → `INSUFICIENTE` (HTTP 200); 404 só sem nenhuma leitura |
 | D12 | Idade | Limite provisório de **30 s**, configurável, sobre `recebidoEm`; exatamente 30 s ainda é atual |
 | D13 | Endpoint | `GET /api/jardins/{id}/tendencia`, DTO próprio (planejado) |
 | D14 | Fonte dos dados (P3) | Consulta nova só para a SW-14; SW-06 e SW-07 inalteradas; divergência documentada |
-| D15 | Testes | Séries construídas à mão; simulador só para observação e regressão |
+| D15 | Testes | Séries construídas à mão; simulador só para observação e regressão; **TDD (RED → GREEN → REFACTOR) obrigatório** |
 
 **Todos os parâmetros numéricos (N, tolerância, idade) são experimentais, definidos a
 partir do simulador, e não estão calibrados para o hardware real.**
@@ -100,9 +103,9 @@ enum, dois usos da tolerância e muito mais casos de teste.
 
 | Parâmetro | Valor | Como é definido | Estado |
 |---|---|---|---|
-| Janela N | 5 leituras | constante nomeada no código | planejado |
-| Tolerância | 1,5 cm | propriedade de configuração; recebida como argumento pela função pura | planejado |
-| Idade máxima | 30 s | propriedade de configuração | planejado |
+| Janela N | 5 leituras | constante `CalculadoraTendencia.TAMANHO_JANELA` | **implementado** |
+| Tolerância | 1,5 cm | propriedade de configuração; recebida como argumento pela função pura | argumento da função **implementado** (rejeita valor negativo, `NaN` ou infinito); propriedade planejada |
+| Idade máxima | 30 s | propriedade de configuração; recebida como argumento pela função pura (junto com o "agora") | argumento da função **implementado** (rejeita valor negativo); propriedade planejada |
 
 Os **nomes das propriedades** ainda não foram definidos [Suposição]: seguir o padrão
 `jardimsentinela.*` já usado em `application.properties` (por exemplo
@@ -135,16 +138,39 @@ deixa de importar.
 combinação inválida. Contrapartida: **novos estados futuros** podem aparecer; os
 clientes devem tratar valores desconhecidos de forma segura.
 
-**Implementado:** o enum `Tendencia` (pacote `br.edu.cesar.jardimsentinela.tendencia`)
-com os seis valores e a documentação acima. Mais nada.
+**Implementado** (pacote `br.edu.cesar.jardimsentinela.tendencia`): o enum `Tendencia`
+com os seis valores e a documentação acima; o record `LeituraNivel` (entrada da função
+pura, sem `id`, independente da entidade JPA `Leitura`); o record `ResultadoTendencia`
+(`tendencia`, `leiturasValidas`, `leiturasDescartadas`, `semTimestampDispositivoNaJanela`,
+`multiplosSensorId`, `ultimaRecepcaoEm`); e a função pura `CalculadoraTendencia.calcular`.
+A conversão `Leitura` → `LeituraNivel` ficará no serviço (Etapa 6) e não pode descartar,
+arredondar ou substituir valores inválidos.
 
 ---
 
 ## 6. Leituras válidas e histórico insuficiente (D10, D11)
 
-**Leitura válida:** `nivelCm` não nulo, finito (não `NaN`, não infinito) e `>= 0`.
+**Leitura válida:** `nivelCm` não nulo, finito (não `NaN`, não infinito) e `>= 0`, **e**
+com ao menos uma referência temporal: `timestampDispositivo` ou `recebidoEm`.
 
 - Leituras inválidas são **descartadas e contabilizadas**, sem conversão silenciosa.
+- **Regra acrescentada (2026-11-19):** uma leitura com `timestampDispositivo` **e**
+  `recebidoEm` ambos nulos é inválida: não há como posicioná-la cronologicamente, então
+  não pode participar do cálculo. **Não** se converte a ausência em data artificial.
+  [Certo] Pela ingestão, `recebidoEm` é sempre preenchido pelo servidor; a regra protege
+  contra dados anômalos.
+- `leiturasDescartadas` conta as leituras inválidas **examinadas** durante a recuperação
+  e o cálculo; **não** é o total de registros inválidos existentes no banco.
+- `leiturasValidas` é a quantidade de leituras efetivamente **usadas na janela**, no
+  máximo N = 5 (com menos de 5 válidas, é a quantidade disponível). Em empates, a análise
+  de possibilidades pode considerar mais candidatos sem aumentar esta contagem. Isso
+  fecha a pendência da semântica de `leiturasValidas` para a função pura.
+- Os sinais informativos (`semTimestampDispositivoNaJanela`, `multiplosSensorId`) são
+  calculados sobre os **candidatos** da janela (incluindo todos os membros de um grupo
+  empatado no corte) e, com menos de 5 válidas, sobre as válidas disponíveis (janela
+  parcial). Leituras descartadas não ligam sinal algum.
+- `ultimaRecepcaoEm` é o maior `recebidoEm` entre as leituras **válidas** e é `null`
+  quando não há nenhuma (ou nenhuma tem `recebidoEm`); não se inventa data.
 - [Certo] Pela ingestão atual, nulo e negativo já não chegam à API (`@NotNull`,
   `@PositiveOrZero` em `LeituraRequest`) e `NaN` não é JSON padrão. A função pura se
   defende mesmo assim, por causa de dados legados e de outras origens.
@@ -308,6 +334,15 @@ tratamento.
   **Não** é a idade real da medição. Numa retransmissão de leituras antigas, o
   `recebidoEm` é novo, então a medição pode ser antiga mesmo com a recepção recente.
   Isso se soma à cronologia não validada (seção 7).
+- **Decisão (2026-11-19): sem `recebidoEm`, a idade não é avaliável.** Se nenhuma
+  leitura válida tiver `recebidoEm` (só `timestampDispositivo`), não há última recepção:
+  `ultimaRecepcaoEm = null` e a função **não** declara `DESATUALIZADO`. Mas **também não
+  afirma que o dado está atualizado**: `ultimaRecepcaoEm = null` significa "atualidade
+  desconhecida", e quem consome o resultado não deve apresentá-lo como "dado atual". A
+  função continua classificando a tendência normalmente. Só ocorre com dados anômalos,
+  pois o servidor sempre preenche `recebidoEm`. É uma **limitação conhecida**, e o escopo
+  desta exceção não será ampliado agora. Uma recepção **posterior** ao "agora"
+  (diferença entre relógios) dá idade negativa e é considerada atual.
 - Os 30 s foram escolhidos só para o **simulador** [Suposição]: o intervalo mais lento
   é 5 s e a janela de 5 leituras cobre até 20 s. Para o hardware, a periodicidade do
   snapshot é desconhecida: [Dado a verificar].
@@ -535,6 +570,14 @@ exigir um histórico muito grande.
   da exposição.
 - **Regressão:** rodar a suíte existente completa, sem alterá-la.
 - O **simulador** serve só para observação e regressão com sementes fixas.
+- **TDD obrigatório (decisão de 2026-11-19):** cada comportamento novo segue
+  **RED** (escrever o teste e vê-lo falhar pelo motivo esperado), **GREEN** (o mínimo
+  para passar) e **REFACTOR** (melhorar com a suíte verde). Os testes **não** são escritos
+  depois de uma calculadora pronta; entram junto com a implementação, um comportamento por
+  ciclo. Isso vale também para a integração (Etapa 6: testes de repositório e de MockMvc
+  antes da implementação correspondente). A Etapa 5 deixou de ser "escrever todos os
+  testes" e passou a ser **revisão de cobertura, casos de borda e execução da suíte
+  completa**.
 
 Cenários aprovados (N = 5, tolerância 1,5 cm, níveis em ordem cronológica):
 
@@ -569,6 +612,26 @@ Cenários aprovados (N = 5, tolerância 1,5 cm, níveis em ordem cronológica):
 Integração: um caso por estado do enum, o 404 do jardim sem leitura, o formato do JSON,
 retransmissão via POST com timestamps fora de ordem, leituras sem timestamp,
 `confiabilidadeCronologia` constante, e a idade com um `Clock` controlável.
+
+### Cobertura dos 25 cenários pela função pura (estado atual)
+
+Testes em `api-jardim-sentinela/src/test/java/br/edu/cesar/jardimsentinela/tendencia/`
+(classes `CalculadoraTendencia*Test`; construtores de dados em `LeiturasDeTeste`). Os 25
+cenários estão cobertos no nível unitário; os de integração (acima) dependem da Etapa 6.
+
+| Cenários | Classe de teste |
+|---|---|
+| 1 a 9 (classificação, limites inclusivos, `BigDecimal`, oscilação, só as pontas) | `CalculadoraTendenciaClassificacaoTest` |
+| 10 (vazio, 1 e 4 leituras), 20 (inválidas), 22 (múltiplos sensores) | `CalculadoraTendenciaTest` (e `...CronologiaTest` para as inválidas intercaladas) |
+| 11, 12, 13, 21 (janela, embaralhado, retransmissão, sem timestamp) | `CalculadoraTendenciaCronologiaTest` |
+| 14 a 19 (empates, corte, todas no mesmo instante) | `CalculadoraTendenciaEmpatesTest` |
+| 23 e 24 (idade e precedência) | `CalculadoraTendenciaAtualidadeTest` |
+| 25 (oráculo por força bruta: 3000 séries sorteadas com semente fixa, 5 a 7 leituras, 4 horários) | `CalculadoraTendenciaOraculoTest` |
+
+Complementos além dos 25: leitura sem nenhuma referência temporal, tolerância e limite de
+idade inválidos, última recepção só sobre válidas, sinais sobre os candidatos do corte.
+Verificação de força: um teste de mutação manual (alterar uma regra por vez) foi
+detectado pela suíte em 6 de 6 mutações experimentadas.
 
 **Os testes passando não bastam como critério de aceite:** é preciso conferir que eles
 representam as decisões de domínio deste documento.
@@ -605,6 +668,9 @@ representam as decisões de domínio deste documento.
    o histórico/estado atual (`recebidoEm`), até a unificação (seção 12).
 10. **Saturação do simulador** em 0 e 50 cm e saturação em 15 cm dos degraus (seção 9).
 11. A medida de tendência **não** é previsão de enchente.
+12. **Atualidade desconhecida sem `recebidoEm`:** com leituras válidas sem nenhum
+    `recebidoEm`, a idade não pode ser medida; o resultado traz `ultimaRecepcaoEm = null`
+    e não afirma que o dado está atual (seção 10).
 
 ### Evoluções futuras
 
@@ -633,8 +699,13 @@ representam as decisões de domínio deste documento.
 2. Validação ponta a ponta do envio do firmware (seção 7.3), incluindo o campo `origem`.
 3. Configuração dos sensores no piloto, calibração e comparabilidade (seção 9).
 4. Periodicidade real do snapshot no hardware, para calibrar a idade máxima.
-5. Semântica exata de `leiturasValidas` e estratégia da consulta (Etapa 6).
+5. Estratégia da consulta (Etapa 6). A semântica de `leiturasValidas` para a função pura
+   está fechada (seção 6); falta definir como o serviço informa a contagem quando a
+   consulta traz mais leituras do que a janela.
 6. Nomes das propriedades de configuração (tolerância e idade máxima).
+7. ~~Comportamento sem nenhum `recebidoEm` nas leituras válidas~~ **Fechado em
+   2026-11-19** (seção 10): `ultimaRecepcaoEm = null`, sem `DESATUALIZADO` e sem afirmar
+   que o dado está atual. Na Etapa 6, o DTO deve manter o `null` visível, sem preenchê-lo.
 
 ## 17. Referências
 

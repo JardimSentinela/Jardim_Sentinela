@@ -5,6 +5,9 @@
 >
 > As **decisões** estão em [`tendencia-nivel.md`](tendencia-nivel.md). Este documento
 > diz **onde o trabalho parou** e **como retomar**.
+>
+> **Atualizado em 2026-11-19:** a função pura `CalculadoraTendencia` e seus testes estão
+> prontos (seções 3, 5, 6 e 7). A metodologia passou a ser **TDD obrigatório**.
 
 ---
 
@@ -33,6 +36,9 @@
 [Dado a verificar] Os históricos de PR apontam para `JardimSentinela/Jardim_Sentinela`,
 enquanto o `origin` local aponta para `RiosGabri/Jardim_Sentinela`. Confirme que a
 organização e o repositório estão corretos e que a sua conta tem permissão de escrita.
+Observação de 2026-11-19: numa nova máquina, o `origin` apontava para
+`https://github.com/JardimSentinela/Jardim_Sentinela` (a organização dos PRs), e a
+branch estava no GitHub com os dois commits esperados (`e6eddd9` e `3db18dc`).
 
 ## 3. Estado da implementação (implementado × planejado)
 
@@ -41,9 +47,10 @@ organização e o repositório estão corretos e que a sua conta tem permissão 
 | Enum `Tendencia` (6 valores, com documentação) | **IMPLEMENTADO** e compilado |
 | `docs/tendencia-nivel.md` (decisões) | **ESCRITO** |
 | `docs/SCRUM-28-handoff.md` (este arquivo) | **ESCRITO** |
-| Record `ResultadoTendencia` | **PLANEJADO** (próximo passo) |
-| Função pura `CalculadoraTendencia` | **PLANEJADO** |
-| Testes unitários da função pura (25 cenários) | **PLANEJADO** |
+| Record `ResultadoTendencia` (6 campos) | **IMPLEMENTADO** e compilado |
+| Record `LeituraNivel` (entrada da função pura, 4 campos, sem `id`) | **IMPLEMENTADO** e compilado |
+| Função pura `CalculadoraTendencia` | **IMPLEMENTADA** (validação, janela, classificação, empates A3, atualidade, precedência) |
+| Testes unitários da função pura (25 cenários) | **IMPLEMENTADOS**: 57 testes em 6 classes, todos passando (ver `tendencia-nivel.md`, seção 14) |
 | Consulta nova em `LeituraRepository` | **PLANEJADO** |
 | `TendenciaService`, `TendenciaController`, `TendenciaResponse` | **PLANEJADO** |
 | Propriedades de configuração (tolerância, idade máxima) e bean `Clock` | **PLANEJADO** |
@@ -51,9 +58,12 @@ organização e o repositório estão corretos e que a sua conta tem permissão 
 | Seção do endpoint em `docs/api-dashboard.md` | **PLANEJADO** |
 | Endpoint `GET /api/jardins/{id}/tendencia` | **NÃO EXISTE ainda** |
 
-**Único código novo da SW-14 até aqui:**
-`api-jardim-sentinela/src/main/java/br/edu/cesar/jardimsentinela/tendencia/Tendencia.java`.
-Nenhum arquivo existente foi modificado.
+**Código novo da SW-14 até aqui** (tudo no pacote
+`br.edu.cesar.jardimsentinela.tendencia`, em `src/main` e `src/test`): `Tendencia`,
+`LeituraNivel`, `ResultadoTendencia`, `CalculadoraTendencia` e as classes de teste
+`CalculadoraTendencia*Test` mais o helper `LeiturasDeTeste`. Nenhum arquivo existente do
+código (SW-06, SW-07, SW-13, firmware, simulador) foi modificado; só a documentação da
+SW-14 foi atualizada.
 
 ## 4. Comandos
 
@@ -83,45 +93,54 @@ Em 2026-11-17, nesta máquina, com a branch acima:
   (2) e os demais testes existentes (`ApiJardimSentinelaApplicationTests`,
   `GeradorDadosJardimTests`).
 
-**Importante:** essa suíte é a **existente**. **Não há ainda nenhum teste da SW-14**, e
-o enum não tem lógica a testar. Nada do plano de testes da seção 7 foi escrito.
+**Importante:** os números acima são do checkpoint de 2026-11-17: a suíte **existente**,
+sem testes da SW-14.
+
+**Atualização de 2026-11-19** (nova máquina, na branch da tarefa, com os arquivos novos
+ainda não commitados): `./mvnw test` executou **76 testes, 0 falhas, 0 erros, `BUILD
+SUCCESS`**: os mesmos 19 existentes (inalterados) mais **57 testes novos** da calculadora
+(`CalculadoraTendenciaTest` 14, `...ClassificacaoTest` 13, `...CronologiaTest` 7,
+`...EmpatesTest` 12, `...AtualidadeTest` 10 e `...OraculoTest` 1).
 
 ## 6. Onde paramos
 
-**Etapa 4, passo 1 concluído — enum criado.**
-**Próximo passo: o record `ResultadoTendencia`.**
+**Etapas 4 e 5 (função pura) concluídas.** Falta a revisão da pessoa responsável e o
+primeiro checkpoint Git desse trabalho (os arquivos novos ainda não estavam commitados
+quando este texto foi escrito). **Próximo passo: Etapa 6 (integração: repositório,
+serviço, controller, DTO e configuração).**
 
 Modo de trabalho combinado (também no prompt de retomada): a pessoa conduz as decisões
-de domínio; o assistente age como professor e par de programação. Etapas pequenas,
-**um passo por vez**, conceito explicado **antes** de usar, e a pergunta literal
-**"Faz sentido até aqui?"** depois de cada bloco de código não trivial.
+de domínio; o assistente age como professor e par de programação, com **TDD
+obrigatório** (RED → GREEN → REFACTOR). Desde 2026-11-19, a pessoa autorizou avançar em
+**blocos** de ciclos TDD sem pedir OK a cada teste, dentro das decisões já fechadas, e
+parar no fim de cada etapa para revisão. Conceito explicado **antes** de usar e a
+pergunta literal **"Faz sentido até aqui?"** depois de cada bloco não trivial.
 
 ## 7. Próximas etapas, na ordem
 
 **Etapa 4 — núcleo (função pura).**
 
 1. ✅ Enum `Tendencia`.
-2. **Record `ResultadoTendencia`** — a estrutura devolvida pela função pura. Explicar
-   `record` antes de usar. Campos mínimos planejados: `tendencia`, `leiturasValidas`,
-   `leiturasDescartadas`, os dois sinais informativos (sem `timestampDispositivo` na
-   janela; mais de um `sensorId`) e a data da última recepção. **A lista exata de campos
-   é fechada neste passo.**
-3. **`CalculadoraTendencia`** (função pura, sem Spring, sem banco, sem relógio global),
-   em partes pequenas, cada uma com testes antes de seguir:
-   - 3a. filtro de leituras válidas e ordenação por chave cronológica (conceitos:
-     `Comparator`, listas e ordenação);
-   - 3b. seleção da janela com empates e corte (conjunto de possibilidades);
-   - 3c. variação líquida, faixa mínima e máxima e classificação, com `BigDecimal`;
-   - 3d. idade (relógio injetado como argumento) e precedência dos estados.
+2. ✅ Record `ResultadoTendencia` (6 campos) e record `LeituraNivel` (4 campos). Decidido:
+   a função pura **não** recebe a entidade `Leitura`, e sim `LeituraNivel`, sem `id`
+   (D8 garantida pelo compilador); a conversão fica no serviço (Etapa 6).
+3. ✅ `CalculadoraTendencia.calcular(leituras, toleranciaCm, idadeMaxima, agora)`
+   (função pura, sem Spring, sem banco, sem relógio global), em ciclos TDD, nos blocos:
+   - A: leituras válidas e contagem, última recepção e sinais, `INSUFICIENTE`;
+   - B: `ENCHENDO`, `ESTAVEL`, `DRENANDO` com `BigDecimal` e limites inclusivos;
+   - C: ordenação cronológica, janela das 5 mais recentes, empates A3 e oráculo;
+   - D: `DESATUALIZADO` com relógio injetado e a precedência dos estados.
 
-**Etapa 5 — testes unitários.** Os 25 cenários aprovados (tabela em
-`tendencia-nivel.md`, seção 14), cada um explicado antes de implementar, incluindo o
-**oráculo por força bruta**. Séries construídas à mão. Sem Spring e sem banco.
+**Etapa 5 — revisão de cobertura (mudou em 2026-11-19).** Os testes unitários são escritos
+junto com a implementação (TDD), então esta etapa é revisar a cobertura dos 25 cenários
+(tabela em `tendencia-nivel.md`, seção 14), os casos de borda e a execução da suíte
+completa. ✅ Feita para a função pura.
 
 **Etapa 6 — integração.** Consulta nova em `LeituraRepository`, `TendenciaService`
 (com `Clock` e configuração), `TendenciaController`, `TendenciaResponse`, propriedades,
-testes de integração (MockMvc, H2 em memória). **Aqui valem os dois cuidados
-obrigatórios da consulta** (seção 9).
+testes de integração (MockMvc, H2 em memória). **Também com TDD**: os testes de
+repositório e de MockMvc entram antes da implementação correspondente. **Aqui valem os
+dois cuidados obrigatórios da consulta** (seção 9).
 
 **Etapa 7 — validação final.** Suíte completa, revisão do diff, seção do endpoint em
 `docs/api-dashboard.md`, confirmação de que SW-06, SW-07 e a SW-13 não foram alteradas,
@@ -159,10 +178,16 @@ correta.
 
 **Pendências de projeto:**
 
-- A função pura recebe a entidade `Leitura` diretamente ou um tipo de entrada próprio?
-  [Dado a verificar] `Leitura` tem construtor público e não depende do banco para ser
-  instanciada em testes, mas acoplaria o cálculo à entidade JPA. Decidir no passo 3.
-- Semântica exata de `leiturasValidas` quando há mais leituras do que a busca traz.
+- ~~A função pura recebe a entidade `Leitura` ou um tipo próprio?~~ **Resolvido
+  (2026-11-19):** tipo próprio e imutável `LeituraNivel`, sem `id`.
+- Semântica de `leiturasValidas`: **resolvida para a função pura** (quantidade usada na
+  janela, no máximo 5). [Dado a verificar] Falta decidir, na Etapa 6, como o serviço
+  informa a contagem quando a consulta traz mais leituras do que a janela.
+- ✅ **Decidido (2026-11-19):** com leituras válidas sem nenhum `recebidoEm`, a função
+  devolve `ultimaRecepcaoEm = null`, não declara `DESATUALIZADO` e **não afirma que o
+  dado está atual** (ver `tendencia-nivel.md`, seção 10). Limitação conhecida; escopo não
+  ampliado. As verificações de tolerância e de idade máxima (negativo, `NaN`, infinito)
+  foram mantidas.
 - Nomes das propriedades de configuração (sugestão: prefixo `jardimsentinela.tendencia.`).
 - Estratégia concreta da consulta e validação do `COALESCE` em ordenação com paginação.
 - Bean `Clock` para testar a idade de forma determinística.
