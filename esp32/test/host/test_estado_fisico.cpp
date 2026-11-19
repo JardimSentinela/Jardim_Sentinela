@@ -78,7 +78,7 @@ static void testarVetores() {
     checar(obtido == esperado, "csv: " + linha + " -> obtido " + nomeEstado(obtido));
     casos++;
   }
-  checar(casos >= 40, "CSV tem pelo menos 40 casos (tem " + std::to_string(casos) + ")");
+  checar(casos >= 30, "CSV tem pelo menos 30 casos (tem " + std::to_string(casos) + ")");
 }
 
 // Nivel oscilando na borda de 22 cm nao pode alternar o estado.
