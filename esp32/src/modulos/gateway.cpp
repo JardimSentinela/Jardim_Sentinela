@@ -113,7 +113,7 @@ bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaSinc) {
   q->flags = (uint8_t)((strcmp(origem, TEXTO_SIMULACAO) == 0 ? codec::FLAG_SIMULACAO : 0) |
                        (t == codec::BOOT ? codec::FLAG_COORDENADAS : 0));
   q->jardimIdx = 0;                    // config do gateway: 0 -> JARDIM_ID
-  q->seqBase = (uint16_t)seq;          // v1 usa u16; o cursor guarda o seq original
+  q->seqBase = seq;                    // 32 bits (v2); o cursor guarda o mesmo seq
   q->bootId = bootId;
   q->baseTs = ts;
   q->n = 1;
@@ -231,7 +231,7 @@ static bool testarCodec(const char* nome, const Evento& e, const char* tsTexto) 
   q.flags = (uint8_t)((strcmp(TEXTO_ORIGEM, TEXTO_SIMULACAO) == 0 ? codec::FLAG_SIMULACAO : 0) |
                       (e.tipo == REG_BOOT ? codec::FLAG_COORDENADAS : 0));
   q.jardimIdx = 0;
-  q.seqBase = (uint16_t)e.seq;
+  q.seqBase = e.seq;
   q.bootId = (uint32_t)strtoul(g_bootId, nullptr, 16);
   q.baseTs = ts;
   q.n = 1;

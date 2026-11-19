@@ -4,15 +4,16 @@
 
 // Codec do "Quadro no ar v2" (little-endian), compartilhado pelo firmware e
 // pelo gateway local da simulacao. v2 = v1 + 2 bytes por registro (estado fisico
-// e tendencia; 0xFF = sem classificacao). O quadro NAO e persistido: e montado
-// a partir do NDJSON no envio. Versoes diferentes de VERSAO sao rejeitadas. Nao depende de Arduino (testavel no host).
+// e tendencia; 0xFF = sem classificacao) e seqBase de 32 bits. O quadro NAO e
+// persistido: e montado a partir do NDJSON no envio. Versoes diferentes de
+// VERSAO sao rejeitadas. Nao depende de Arduino (testavel no host).
 namespace codec {
 
 constexpr uint8_t  VERSAO          = 0x02;
-constexpr size_t   CABECALHO       = 14;
+constexpr size_t   CABECALHO       = 16;
 constexpr uint8_t  MAX_REGISTROS   = 6;
-constexpr size_t   MAX_BYTES       = 68;   // 14 + 6 x 9: 6 registros sem gap/absoluto/coords
-constexpr size_t   MAX_COM_EXTRAS  = 146;  // limite folgado: 68 + 6 x (gap+abs+coords); o real e 145
+constexpr size_t   MAX_BYTES       = 70;   // 16 + 6 x 9: 6 registros sem gap/absoluto/coords
+constexpr size_t   MAX_COM_EXTRAS  = 148;  // limite folgado: 70 + 6 x (gap+abs+coords); o real e 147
 constexpr uint8_t  SENSOR_JARDIM   = 31;
 constexpr uint16_t DTS_ABSOLUTO    = 0xFFFF;
 constexpr uint8_t  FLAG_SIMULACAO  = 0x01; // bit0: origem simulada
@@ -56,7 +57,7 @@ inline bool classificacaoValida(uint8_t valor, uint8_t maximo) {
 struct Quadro {
   uint8_t  flags;
   uint8_t  jardimIdx;
-  uint16_t seqBase;
+  uint32_t seqBase;   // 32 bits: o seq nao pode dar a volta em 65.535
   uint32_t bootId;
   uint32_t baseTs;
   uint8_t  n;
@@ -126,7 +127,7 @@ inline size_t codificar(const Quadro& q, uint8_t* out, size_t capacidade) {
   out[p++] = q.flags;
   out[p++] = q.jardimIdx;
   out[p++] = q.n;
-  put16(out, p, q.seqBase);
+  put32(out, p, q.seqBase);
   put32(out, p, q.bootId);
   put32(out, p, q.baseTs);
 
@@ -179,7 +180,7 @@ inline bool decodificar(const uint8_t* in, size_t tam, Quadro* q,
   if (tam < CABECALHO + (size_t)q->n * 9) return false;
 
   size_t p = 4;
-  q->seqBase = get16(in, p);
+  q->seqBase = get32(in, p);
   q->bootId = get32(in, p);
   q->baseTs = get32(in, p);
 
