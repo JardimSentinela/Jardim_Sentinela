@@ -10,14 +10,49 @@ que o código gerado (ou qualquer mock) pode usar hoje, em `develop`.
 
 ## CORS
 
-Liberado para `/api/**`, métodos `GET`/`POST`, qualquer header. Origem
-controlada pela property `jardimsentinela.cors.allowed-origins`
-(`application.properties`), hoje em `*` para não travar o preview do
-dashboard. **Antes de publicar fora do ambiente de desenvolvimento**, trocar
-por uma lista fechada com a URL real do dashboard — "*" não deve ir pra
-produção (ver `config/WebConfig.java`).
+Liberado para `/api/**`, métodos `GET`/`POST`, qualquer header, **somente para
+uma lista fechada de origens**: `http://localhost:5173` (dev do Vite) e
+`http://localhost:4173` (preview do build). Origem fora da lista não recebe
+`Access-Control-Allow-Origin` (o navegador bloqueia a leitura; o preflight
+também é recusado). Não há mais `*`.
+
+A lista vem da propriedade `jardimsentinela.cors.allowed-origins`
+(`application.properties`), separada por vírgula. Quando houver deploy do
+dashboard, acrescentar a URL dele nessa propriedade (ver `config/WebConfig.java`
+e `docs/decisoes-tecnicas.md` §6.6).
+
+## Ordenação (leitura mais recente)
+
+Histórico e estado atual ordenam pela chave `COALESCE(timestampDispositivo,
+recebidoEm)`, da mais recente para a mais antiga, com desempate por `id`
+decrescente. Assim, leituras retransmitidas pela fila do dispositivo ficam na
+ordem em que o evento aconteceu, não na ordem em que chegaram. Por isso
+`ultimaLeituraEm` é a data (pela mesma chave) da leitura mais recente.
 
 ## Endpoints
+
+### `GET /api/jardins` — lista de jardins com resumo
+
+Um item por jardim que já enviou ao menos uma leitura, ordenado por `jardimId`.
+Jardim sem leitura **não aparece** (sem dados, a resposta é `[]`, status 200).
+Cada item traz a leitura mais recente segundo a chave de ordenação acima.
+
+```bash
+curl http://localhost:8080/api/jardins
+```
+
+```json
+[
+  { "jardimId": "J01", "nivelCm": 24.0, "estado": "ENCHENDO",
+    "ultimaLeituraEm": "2026-11-19T10:00:00Z", "totalLeituras": 1 },
+  { "jardimId": "J02", "nivelCm": 10.5, "estado": null,
+    "ultimaLeituraEm": "2026-11-19T10:00:05Z", "totalLeituras": 1 }
+]
+```
+
+`estado` é `null` quando o registro não traz classificação (ver abaixo). A lista
+mostra todos os ids que já enviaram dados, inclusive ids legados do firmware; a
+validação de formato (`^J\d{2}$`) ainda não está ligada.
 
 ### `GET /api/jardins/{id}` — estado atual de um jardim
 
@@ -31,12 +66,20 @@ curl http://localhost:8080/api/jardins/J01
 {
   "jardimId": "J01",
   "sensorId": "S01",
-  "nivelCm": 18.5,
-  "bateria": 97,
-  "ultimaLeituraEm": "2026-11-04T14:02:10.123Z",
-  "totalLeituras": 42
+  "nivelCm": 24.0,
+  "bateria": 100,
+  "ultimaLeituraEm": "2026-11-19T10:00:00Z",
+  "totalLeituras": 1,
+  "estado": "ENCHENDO",
+  "tendencia": null
 }
 ```
+
+- `estado`: vem do registro mais recente, como o dispositivo enviou (`NORMAL`,
+  `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`). A API **não recalcula**. É `null`
+  em registros antigos, sem classificação.
+- `tendencia`: será calculada pela API (SW-14). O campo já existe, mas hoje
+  vem sempre `null`.
 
 Jardim sem nenhuma leitura ainda → **404** com corpo JSON padronizado
 (`erro: "JARDIM_NAO_ENCONTRADO"`, ver "Erros" abaixo). O dashboard precisa
@@ -44,7 +87,7 @@ tratar esse caso (jardim cadastrado mas ainda sem dado é diferente de erro).
 
 ### `GET /api/jardins/{id}/leituras?limite=N` — histórico
 
-Mais recente primeiro. `limite` é opcional (padrão 100, máximo 1000 —
+Mais recente primeiro (chave de ordenação acima). `limite` é opcional (padrão 100, máximo 1000 —
 valores fora da faixa são ajustados, nunca dá erro por causa do `limite`).
 
 ```bash
@@ -53,15 +96,14 @@ curl "http://localhost:8080/api/jardins/J01/leituras?limite=5"
 
 ```json
 [
-  { "id": 42, "jardimId": "J01", "sensorId": "S01", "nivelCm": 18.5, "bateria": 97,
-    "recebidoEm": "2026-11-04T14:02:10.123Z", "timestampDispositivo": "2026-11-04T14:02:09Z" },
-  { "id": 41, "jardimId": "J01", "sensorId": "S01", "nivelCm": 18.1, "bateria": 97,
-    "recebidoEm": "2026-11-04T14:01:40.001Z", "timestampDispositivo": null }
+  { "id": 1, "jardimId": "J01", "sensorId": "S01", "nivelCm": 24.0, "bateria": 100,
+    "recebidoEm": "2026-11-19T05:34:46.338720Z", "timestampDispositivo": "2026-11-19T10:00:00Z",
+    "estado": "ENCHENDO", "tendenciaDispositivo": "SUBINDO", "versaoRegra": "v1-provisoria-2026-11" }
 ]
 ```
 
 `timestampDispositivo` vem `null` quando a origem não manda `timestamp`
-(hoje, o simulador). Jardim sem nenhuma leitura → **404** com o mesmo corpo
+(hoje, o simulador); nesse caso a ordenação usa `recebidoEm`. `estado`, `tendenciaDispositivo` e `versaoRegra` vêm `null` em registros sem classificação. Jardim sem nenhuma leitura → **404** com o mesmo corpo
 `JARDIM_NAO_ENCONTRADO` do endpoint acima; array vazio não é o mesmo caso.
 
 ### `GET /api/jardins/{id}/tendencia` — o jardim está enchendo, estável ou drenando?
@@ -168,6 +210,43 @@ Aceita tanto `{"jardimId","sensorId","nivelCm","bateria"}` (simulador) quanto
 **200** com a leitura já existente se for uma retransmissão (mesmo
 jardim+sensor+timestamp).
 
+Campos **opcionais** novos, enviados pelo dispositivo:
+
+| Campo | Valores aceitos |
+|---|---|
+| `estado` | `NORMAL`, `ENCHENDO`, `TRANSBORDANDO`, `ALAGADO` |
+| `tendenciaDispositivo` | `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`, `INDETERMINADO`, `DESATUALIZADO` |
+| `versaoRegra` | texto, até 64 caracteres (ex.: `v1-provisoria-2026-11`) |
+
+Se vierem, são **guardados como vieram e não são recalculados**. Se não vierem,
+ficam `null`. Valor fora da lista (ou `versaoRegra` acima de 64 caracteres)
+retorna **400** `PAYLOAD_INVALIDO`.
+
+Exemplo de resposta (201) para um envio com os campos novos:
+
+```json
+{
+  "id": 1, "jardimId": "J01", "sensorId": "S01", "nivelCm": 24.0, "bateria": 100,
+  "recebidoEm": "2026-11-19T05:34:46.338719902Z", "timestampDispositivo": "2026-11-19T10:00:00Z",
+  "estado": "ENCHENDO", "tendenciaDispositivo": "SUBINDO", "versaoRegra": "v1-provisoria-2026-11"
+}
+```
+
+Sem os campos novos, a resposta traz `"estado": null`, `"tendenciaDispositivo": null`
+e `"versaoRegra": null`.
+
+Exemplo de erro por `estado` fora da lista (`"estado":"SECO"`):
+
+```json
+{
+  "status": 400,
+  "erro": "PAYLOAD_INVALIDO",
+  "mensagem": "Um ou mais campos não passaram na validação.",
+  "campos": [{ "campo": "estado", "mensagem": "deve ser um de NORMAL, ENCHENDO, TRANSBORDANDO, ALAGADO" }],
+  "momento": "2026-11-19T05:34:46.427200299Z"
+}
+```
+
 Erro de validação (campo ausente/inválido):
 
 ```json
@@ -196,10 +275,10 @@ Jardim sem nenhuma leitura (`GET /api/jardins/{id}`,
 ## Mocks para o Designer
 
 Se o fluxo do Figma→código precisar de dado antes da API estar de pé numa
-máquina acessível, os três JSONs de resposta acima (`GET /api/jardins/{id}`,
-`GET /api/jardins/{id}/leituras`, erro de validação) são exemplos reais —
-produzidos pelos testes automatizados (`JardimControllerTests`,
-`LeituraIngestaoTests`), não inventados agora. Dá pra colar direto num mock
+máquina acessível, os JSONs de resposta acima (`GET /api/jardins`, `GET /api/jardins/{id}`,
+`GET /api/jardins/{id}/leituras`, erros) são exemplos reais —
+produzidos pelos testes automatizados (`JardimControllerTests`, `JardimOrdenacaoTests`,
+`ListaJardinsTests`, `LeituraCamposEstadoTests`, `LeituraIngestaoTests`), não inventados agora. Dá pra colar direto num mock
 de API (MSW, json-server, etc.) sem esperar o backend local subir.
 
 ## Dependências deste card (ver Jira)

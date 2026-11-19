@@ -6,19 +6,18 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * [SCRUM-20][SW-11] CORS para o dashboard gerado (Figma → código) consumir a
- * API a partir de outra origem (ex.: servidor de dev do front, Vercel/Netlify
- * de preview) sem retrabalho estrutural.
+ * [SCRUM-20][SW-11] CORS para o dashboard consumir a API a partir de outra origem.
  *
- * Origem padrão "*" é deliberadamente permissiva para o dashboard de preview
- * poder bater na API sem fricção enquanto a equipe ainda está integrando.
- * Antes de qualquer deploy fora do ambiente de desenvolvimento, isso precisa
- * virar uma lista fechada de origens — não deixar "*" em produção.
+ * Lista fechada de origens (docs/decisoes-tecnicas.md §6.6): servidor de dev (5173) e
+ * preview do build (4173) do Vite. Nada de "*": com ele, qualquer página aberta no
+ * navegador de quem roda a API poderia enviar dados a ela, inclusive por POST.
+ * A origem de produção entra pela propriedade jardimsentinela.cors.allowed-origins
+ * (lista separada por vírgula), quando houver deploy.
  */
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    @Value("${jardimsentinela.cors.allowed-origins:*}")
+    @Value("${jardimsentinela.cors.allowed-origins:http://localhost:5173,http://localhost:4173}")
     private String[] origensPermitidas;
 
     @Override
