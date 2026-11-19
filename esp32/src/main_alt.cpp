@@ -17,6 +17,7 @@
 #include "modulos/hw02_sonda.h"
 #include "modulos/rede.h"
 #include "modulos/relogio.h"
+#include "modulos/totem.h"
 
 void setup() {
   Serial.begin(115200);
@@ -30,6 +31,7 @@ void setup() {
   analogSetAttenuation(ADC_11db);
 
   iniciarSonda();
+  iniciarTotem();
 
   if (!LittleFS.begin(true)) Serial.println("ERRO: LittleFS");
 
@@ -60,6 +62,7 @@ void setup() {
 void loop() {
   atualizarWifi();
   atualizarHora();
+  atualizarTotem();
 
   Evento e;
   while (xQueueReceive(filaEventos, &e, 0) == pdTRUE) {

@@ -38,3 +38,11 @@ SaidaSinalizacao calcularSinalizacao(EstadoFisico estado, TendenciaLocal tendenc
   saida.buzzer = somPermitido(estado, tendencia) && dentroDeUmPulso(agoraMs % SOM_CICLO_MS);
   return saida;
 }
+
+SaidaSinalizacao calcularSinalizacaoDeBytes(uint8_t estado, uint8_t tendencia, uint32_t agoraMs) {
+  if (estado > (uint8_t)EstadoFisico::ALAGADO) return SaidaSinalizacao{false, false, false, false};
+  const TendenciaLocal t = tendencia > (uint8_t)TendenciaLocal::DESATUALIZADO
+                               ? TendenciaLocal::INSUFICIENTE
+                               : (TendenciaLocal)tendencia;
+  return calcularSinalizacao((EstadoFisico)estado, t, agoraMs);
+}

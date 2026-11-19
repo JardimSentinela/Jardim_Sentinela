@@ -72,6 +72,9 @@ void tarefaAmostragem(void*) {
       ultimoNivelSonda = sonda.nivelCm;
       temLeituraSonda  = true;
       classificarLeituraSonda(classificador, sonda.nivelCm);
+      // Totem: estado e tendencia atuais, para o loop acender LEDs e buzzer.
+      g_estadoTotem.store(estadoParaRegistro(classificador));
+      g_tendenciaTotem.store(tendenciaParaRegistro(classificador, millis()));
 
       Serial.printf(
           "[HW-02] ADC: %d | Nivel: %.2f cm | Taxa: %.2f cm/min | Mudou: %s\n",

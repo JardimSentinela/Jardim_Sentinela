@@ -31,6 +31,11 @@ struct ChaveResolvida { char boot[9]; uint32_t seq; };
 
 extern QueueHandle_t filaEventos;
 extern std::atomic<uint32_t> descartados;
+
+// Publicado pela tarefa de amostragem, lido pelo loop (totem): ordinais de
+// EstadoFisico e de TendenciaLocal; 0xFF = sem leitura da sonda ainda.
+extern std::atomic<uint8_t> g_estadoTotem;
+extern std::atomic<uint8_t> g_tendenciaTotem;
 extern ContadoresEnvio g_envio;
 
 extern EstadoWifi g_wifi;

@@ -2,6 +2,8 @@
 
 QueueHandle_t filaEventos = nullptr;
 std::atomic<uint32_t> descartados{0};
+std::atomic<uint8_t> g_estadoTotem{0xFF};
+std::atomic<uint8_t> g_tendenciaTotem{0xFF};
 ContadoresEnvio g_envio = {0, 0, 0, 0, 0, 0};
 
 EstadoWifi g_wifi = WIFI_OCIOSO;

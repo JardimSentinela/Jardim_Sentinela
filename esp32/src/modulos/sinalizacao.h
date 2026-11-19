@@ -44,4 +44,10 @@ bool somPermitido(EstadoFisico estado, TendenciaLocal tendencia);
 SaidaSinalizacao calcularSinalizacao(EstadoFisico estado, TendenciaLocal tendencia,
                                      uint32_t agoraMs);
 
+// Versao para os bytes publicados pela tarefa de amostragem (ordinais de
+// EstadoFisico e TendenciaLocal; 0xFF = sem leitura). Estado fora da lista ou
+// 0xFF: tudo apagado e calado (sem leitura nao se sinaliza nada). Tendencia
+// fora da lista conta como INSUFICIENTE: TRANSBORDANDO nao soa; ALAGADO soa.
+SaidaSinalizacao calcularSinalizacaoDeBytes(uint8_t estado, uint8_t tendencia, uint32_t agoraMs);
+
 #endif
