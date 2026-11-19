@@ -194,6 +194,36 @@ static void testarTMsEntreBoots() {
          "tMs: retardatario do boot antigo nao altera a idade do boot atual");
 }
 
+// seq de 32 bits: a ordem nao pode "dar a volta" em 65.535 (uint16_t). Se o seq
+// fosse truncado em 16 bits, 65536 viraria 0 e iria para o inicio da janela.
+static void testarSeqAtravessaDezesseisBits() {
+  // Por seq: 65533..65537 com niveis 10..14 (SUBINDO), entregues embaralhados.
+  std::vector<LeituraTendencia> v = {
+      {1u, 65536u, 15000u, 13.0f}, {1u, 65533u, 0u, 10.0f},     {1u, 65537u, 20000u, 14.0f},
+      {1u, 65535u, 10000u, 12.0f}, {1u, 65534u, 5000u, 11.0f}};
+  checar(calcular(v, 1u, 20000u) == TendenciaLocal::SUBINDO,
+         "seq 65533..65537 (cruza 65535 -> 65536): ordem correta, SUBINDO");
+
+  // Mesmo cruzamento em queda: niveis 14..10 por seq => DESCENDO.
+  std::vector<LeituraTendencia> w = {
+      {1u, 65537u, 20000u, 10.0f}, {1u, 65533u, 0u, 14.0f},     {1u, 65536u, 15000u, 11.0f},
+      {1u, 65534u, 5000u, 13.0f},  {1u, 65535u, 10000u, 12.0f}};
+  checar(calcular(w, 1u, 20000u) == TendenciaLocal::DESCENDO,
+         "seq cruzando 65535 -> 65536 em queda: DESCENDO");
+
+  // Janela deslizando por cima do limite: 6 leituras, so as 5 ultimas contam.
+  std::vector<LeituraTendencia> j;
+  for (uint32_t i = 0; i < 6; i++) j.push_back(LeituraTendencia{1u, 65532u + i, i * 5000u, i < 1 ? 50.0f : 10.0f});
+  checar(calcular(j, 1u, 25000u) == TendenciaLocal::ESTAVEL,
+         "janela desliza por cima de 65535: a primeira (seq 65532) sai da janela");
+
+  // Limite superior de 32 bits.
+  std::vector<LeituraTendencia> u = {
+      {1u, 0xFFFFFFFBu, 0u, 10.0f},     {1u, 0xFFFFFFFCu, 5000u, 11.0f}, {1u, 0xFFFFFFFDu, 10000u, 12.0f},
+      {1u, 0xFFFFFFFEu, 15000u, 13.0f}, {1u, 0xFFFFFFFFu, 20000u, 14.0f}};
+  checar(calcular(u, 1u, 20000u) == TendenciaLocal::SUBINDO, "seq proximo de 2^32 ordena corretamente");
+}
+
 static void testarEntradaVazia() {
   checar(calcularTendenciaLocal(nullptr, 0, 1u, 0u, IDADE_MAX_SIM_MS) ==
              TendenciaLocal::INSUFICIENTE,
@@ -208,6 +238,7 @@ int main() {
   testarSeqComBuracos();
   testarSeqDoBootAntigoMaior();
   testarTMsEntreBoots();
+  testarSeqAtravessaDezesseisBits();
   testarEntradaVazia();
 
   std::printf("\n%s\n", falhas == 0 ? "TODOS OS CENARIOS OK" : "HOUVE FALHAS");

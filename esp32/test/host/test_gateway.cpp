@@ -126,6 +126,22 @@ static void testarLinhaAntiga() {
 
 // Linha gravada com o id antigo do jardim: continua enviada, com o id do firmware
 // atual (JARDIM_ID). E uma migracao silenciosa, registrada no relatorio.
+// seq acima de 65.535 chega ao JSON sem truncar (par (bootId, seq) continua unico).
+static void testarSeqGrandeNaLinha() {
+  const unsigned seqs[] = {65535u, 65536u, 70000u, 4294967295u};
+  for (unsigned s : seqs) {
+    std::string entrada = linha("snapshot", JARDIM_ID, "jardim", "30.0", s, "", "");
+    std::string json;
+    bool ok = viaGateway(entrada, &json);
+    checar(ok && json == entrada, "seq " + std::to_string(s) + " sai identico no JSON (32 bits)");
+  }
+  std::string entrada = linha("evento", JARDIM_ID, "sensor-04", "30.0", 100000u, EXTRA_EVENTO,
+                              camposNovos("ENCHENDO", "SUBINDO"));
+  std::string json;
+  checar(viaGateway(entrada, &json) && json == entrada,
+         "evento com seq 100000 e campos novos sai identico");
+}
+
 static void testarLinhaAntigaComIdAntigo() {
   std::string json;
   bool ok = viaGateway(linha("snapshot", "jardim-centro-01", "jardim", "30.0", 8, "", ""), &json);
@@ -190,11 +206,11 @@ static void testarNomesInvalidos() {
 static void testarMaiorLinhaCabe() {
   codec::Quadro q{};
   q.flags = codec::FLAG_SIMULACAO | codec::FLAG_COORDENADAS;
-  q.seqBase = 0xFFFF;
+  q.seqBase = 0xFFFFFFFFu;
   q.bootId = 0xFFFFFFFF;
   q.baseTs = 4102444799u;
   q.n = 1;
-  q.regs[0] = {codec::BOOT, codec::SENSOR_JARDIM, 0xFFFF, 4102444799u, 255, 100, 0,
+  q.regs[0] = {codec::BOOT, codec::SENSOR_JARDIM, 0xFFFFFFFFu, 4102444799u, 255, 100, 0,
                -1234567890, -1234567890, true, codec::ESTADO_MAX, codec::TENDENCIA_MAX};
   char json[TAMANHO_LINHA];
   bool ok = montarJsonGateway(q, 0, false, json, sizeof(json));
@@ -205,7 +221,7 @@ static void testarMaiorLinhaCabe() {
          "boot mais longo termina inteiro (nada truncado)");
 
   q.flags = codec::FLAG_SIMULACAO;
-  q.regs[0] = {codec::EVENTO, 30, 0xFFFF, 4102444799u, 255, 100, 0xFFFF, 0, 0, false,
+  q.regs[0] = {codec::EVENTO, 30, 0xFFFFFFFFu, 4102444799u, 255, 100, 0xFFFF, 0, 0, false,
                codec::ESTADO_MAX, codec::TENDENCIA_MAX};
   ok = montarJsonGateway(q, 0, true, json, sizeof(json));
   checar(ok && std::strlen(json) + 16 < TAMANHO_LINHA, "evento mais longo cabe em TAMANHO_LINHA");
@@ -234,6 +250,7 @@ static void testarRejeicaoPorVersao() {
 int main() {
   testarLinhaAntiga();
   testarLinhaAntigaComIdAntigo();
+  testarSeqGrandeNaLinha();
   testarLinhaNova();
   testarSoUmCampo();
   testarNomesInvalidos();

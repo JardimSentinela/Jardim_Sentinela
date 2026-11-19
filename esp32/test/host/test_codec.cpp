@@ -26,8 +26,9 @@ static bool mesmoRegistro(const codec::Registro& a, const codec::Registro& b) {
 }
 
 // Quadro minimo: 1 evento, sem gap, sem ts absoluto, sem coordenadas.
-// Layout v2: cabecalho (14) + meta(1) dTs(2) nivel(1) bateria(1) deltaT(2)
-// estado(1) tendencia(1) = 23 bytes; estado em [21] e tendencia em [22].
+// Layout v2: cabecalho (16, com seqBase de 32 bits) + meta(1) dTs(2) nivel(1)
+// bateria(1) deltaT(2) estado(1) tendencia(1) = 25 bytes; estado em [23] e
+// tendencia em [24].
 static codec::Quadro quadroMinimo(uint8_t estado, uint8_t tendencia) {
   codec::Quadro u{};
   u.flags = codec::FLAG_SIMULACAO;
@@ -42,8 +43,9 @@ static codec::Quadro quadroMinimo(uint8_t estado, uint8_t tendencia) {
 static void testarConstantes() {
   checar(codec::VERSAO == 0x02, "versao do quadro = 0x02");
   checar(codec::SEM_CLASSIFICACAO == 0xFF, "sem classificacao = 0xFF");
-  checar(codec::MAX_BYTES == 68, "MAX_BYTES = 14 + 6 x 9 = 68");
-  checar(codec::MAX_COM_EXTRAS == 146, "MAX_COM_EXTRAS = 68 + 6 x 13 = 146");
+  checar(codec::CABECALHO == 16, "cabecalho = 16 bytes (seqBase de 32 bits)");
+  checar(codec::MAX_BYTES == 70, "MAX_BYTES = 16 + 6 x 9 = 70");
+  checar(codec::MAX_COM_EXTRAS == 148, "MAX_COM_EXTRAS = 70 + 6 x 13 = 148");
   // O valor no fio e o ordinal dos enums: o codec nao os inclui, entao o teste confere.
   checar(codec::ESTADO_MAX == (uint8_t)EstadoFisico::ALAGADO, "ESTADO_MAX = ultimo EstadoFisico");
   checar(codec::TENDENCIA_MAX == (uint8_t)TendenciaLocal::DESATUALIZADO,
@@ -60,7 +62,7 @@ static void testarRegistroAntigo() {
   uint8_t buf[codec::MAX_COM_EXTRAS];
   size_t tam = codec::codificar(u, buf, sizeof(buf));
   codec::Quadro d{};
-  checar(tam == 23 && codec::decodificar(buf, tam, &d), "quadro com 0xFF/0xFF codifica e decodifica");
+  checar(tam == 25 && codec::decodificar(buf, tam, &d), "quadro com 0xFF/0xFF codifica e decodifica");
   checar(d.regs[0].estado == codec::SEM_CLASSIFICACAO &&
              d.regs[0].tendencia == codec::SEM_CLASSIFICACAO,
          "0xFF/0xFF volta como 'sem classificacao', sem inventar valor");
@@ -70,9 +72,9 @@ static void testarLayoutDosBytesNovos() {
   codec::Quadro u = quadroMinimo(2, 5);
   uint8_t buf[codec::MAX_COM_EXTRAS];
   size_t tam = codec::codificar(u, buf, sizeof(buf));
-  checar(tam == 23 && tam == codec::tamanho(u), "quadro minimo v2 tem 23 bytes (v1 tinha 21)");
+  checar(tam == 25 && tam == codec::tamanho(u), "quadro minimo v2 tem 25 bytes (v1 tinha 21)");
   checar(buf[0] == 0x02, "primeiro byte do quadro e a versao 0x02");
-  checar(buf[21] == 2 && buf[22] == 5, "estado em [21] e tendencia em [22]");
+  checar(buf[23] == 2 && buf[24] == 5, "estado em [23] e tendencia em [24]");
 }
 
 static void testarValoresInvalidos() {
@@ -80,14 +82,14 @@ static void testarValoresInvalidos() {
   uint8_t buf[codec::MAX_COM_EXTRAS];
   size_t tam = codec::codificar(u, buf, sizeof(buf));
   codec::Quadro d{};
-  checar(tam == 23, "quadro base para corromper");
+  checar(tam == 25, "quadro base para corromper");
 
   const uint8_t ruins[] = {codec::ESTADO_MAX + 1, 0x7F, 0xFE};
   bool ok = true;
   for (uint8_t v : ruins) {
     uint8_t c[codec::MAX_COM_EXTRAS];
     std::memcpy(c, buf, tam);
-    c[21] = v;
+    c[23] = v;
     ok = ok && !codec::decodificar(c, tam, &d);
   }
   checar(ok, "decodificador rejeita estado fora de 0..3 e diferente de 0xFF");
@@ -96,7 +98,7 @@ static void testarValoresInvalidos() {
   for (uint8_t v : {(uint8_t)(codec::TENDENCIA_MAX + 1), (uint8_t)0x7F, (uint8_t)0xFE}) {
     uint8_t c[codec::MAX_COM_EXTRAS];
     std::memcpy(c, buf, tam);
-    c[22] = v;
+    c[24] = v;
     ok = ok && !codec::decodificar(c, tam, &d);
   }
   checar(ok, "decodificador rejeita tendencia fora de 0..5 e diferente de 0xFF");
@@ -105,11 +107,66 @@ static void testarValoresInvalidos() {
          "codificador rejeita estado invalido");
   checar(codec::tamanho(quadroMinimo(0, codec::TENDENCIA_MAX + 1)) == 0,
          "codificador rejeita tendencia invalida");
-  checar(codec::tamanho(quadroMinimo(codec::ESTADO_MAX, codec::TENDENCIA_MAX)) == 23,
+  checar(codec::tamanho(quadroMinimo(codec::ESTADO_MAX, codec::TENDENCIA_MAX)) == 25,
          "extremos validos (3 e 5) sao aceitos");
 }
 
+// seqBase de 32 bits: o seq nao pode ser truncado em 65.535 (uint16_t).
+static void testarSeq32Bits() {
+  // Volta a passar por 65.535 dentro do mesmo quadro: 65534, 65535, 65536, 65537.
+  codec::Quadro q{};
+  q.flags = codec::FLAG_SIMULACAO;
+  q.seqBase = 65534;
+  q.bootId = 0x0A0B0C0D;
+  q.baseTs = 1790000000;
+  q.n = 4;
+  for (uint8_t i = 0; i < 4; i++) {
+    q.regs[i] = {codec::SNAPSHOT, codec::SENSOR_JARDIM, 65534u + i, 1790000000u + i, 10, 100, 0, 0, 0,
+                 false, 1, 0};
+  }
+  uint8_t buf[codec::MAX_COM_EXTRAS];
+  size_t tam = codec::codificar(q, buf, sizeof(buf));
+  codec::Quadro d{};
+  bool ok = tam > 0 && codec::decodificar(buf, tam, &d) && d.n == 4 && d.seqBase == 65534;
+  checar(ok, "quadro que atravessa 65535 -> 65536 codifica e decodifica");
+  checar(ok && d.regs[0].seq == 65534 && d.regs[1].seq == 65535 && d.regs[2].seq == 65536 &&
+             d.regs[3].seq == 65537,
+         "seq 65534, 65535, 65536, 65537 voltam identicos (sem dar a volta em 16 bits)");
+
+  // seqBase acima de 65.535.
+  q.seqBase = 70000;
+  for (uint8_t i = 0; i < 4; i++) q.regs[i].seq = 70000u + i * 2;  // com gaps
+  tam = codec::codificar(q, buf, sizeof(buf));
+  ok = tam > 0 && codec::decodificar(buf, tam, &d) && d.seqBase == 70000 &&
+       d.regs[3].seq == 70006;
+  checar(ok, "seqBase 70000 (acima de 16 bits) preservado, com gaps");
+
+  // Limite superior: 0xFFFFFFFE e 0xFFFFFFFF.
+  codec::Quadro m{};
+  m.flags = codec::FLAG_SIMULACAO;
+  m.seqBase = 0xFFFFFFFEu;
+  m.bootId = 1;
+  m.baseTs = 1790000000;
+  m.n = 2;
+  m.regs[0] = {codec::SNAPSHOT, codec::SENSOR_JARDIM, 0xFFFFFFFEu, 1790000000u, 1, 100, 0, 0, 0, false};
+  m.regs[1] = {codec::SNAPSHOT, codec::SENSOR_JARDIM, 0xFFFFFFFFu, 1790000001u, 1, 100, 0, 0, 0, false};
+  tam = codec::codificar(m, buf, sizeof(buf));
+  checar(tam > 0 && codec::decodificar(buf, tam, &d) && d.seqBase == 0xFFFFFFFEu &&
+             d.regs[1].seq == 0xFFFFFFFFu,
+         "seq no limite de 32 bits (0xFFFFFFFE, 0xFFFFFFFF)");
+
+  // seq que da a volta em 32 bits e rejeitado (nao e crescente).
+  m.regs[1].seq = 0;
+  checar(codec::tamanho(m) == 0, "seq que volta a zero em 32 bits e rejeitado pelo codificador");
+
+  // seqBase diferente do seq do primeiro registro continua invalido.
+  codec::Quadro x = q;
+  x.regs[0].seq = x.seqBase + 1;
+  checar(codec::tamanho(x) == 0, "seq do primeiro registro precisa ser o seqBase");
+}
+
 int main() {
+  testarSeq32Bits();
   testarConstantes();
   testarRegistroAntigo();
   testarLayoutDosBytesNovos();
@@ -176,7 +233,7 @@ int main() {
   size_t tam6 = codec::codificar(s, buf6, sizeof(buf6));
   codec::Quadro d6{};
   checar(tam6 == codec::tamanho(s) && tam6 == codec::MAX_BYTES,
-         "6 registros ocupam exatamente MAX_BYTES (68)");
+         "6 registros ocupam exatamente MAX_BYTES (70)");
   checar(codec::decodificar(buf6, tam6, &d6) && d6.n == 6 &&
              d6.regs[5].seq == 15,
          "6 registros decodificam");
@@ -185,7 +242,7 @@ int main() {
   checar(pares, "os 6 pares (estado, tendencia) voltam identicos");
 
   // Pior caso real: 6 boots, todos com ts absoluto e coordenadas, e gap em 5
-  // (o primeiro nao tem gap): 14 + 6x9 + 5 + 6x4 + 6x8 = 145 <= MAX_COM_EXTRAS (146).
+  // (o primeiro nao tem gap): 16 + 6x9 + 5 + 6x4 + 6x8 = 147 <= MAX_COM_EXTRAS (148).
   codec::Quadro w{};
   w.flags = codec::FLAG_SIMULACAO | codec::FLAG_COORDENADAS;
   w.seqBase = 0;
@@ -198,8 +255,8 @@ int main() {
   }
   uint8_t bufw[codec::MAX_COM_EXTRAS];
   size_t tamw = codec::codificar(w, bufw, sizeof(bufw));
-  checar(tamw == 145 && tamw <= codec::MAX_COM_EXTRAS,
-         "pior caso (gap + ts absoluto + coords) = 145 bytes, cabe em MAX_COM_EXTRAS");
+  checar(tamw == 147 && tamw <= codec::MAX_COM_EXTRAS,
+         "pior caso (gap + ts absoluto + coords) = 147 bytes, cabe em MAX_COM_EXTRAS");
 
   // Flags sem coordenadas: boot nao carrega lat/lon.
   codec::Quadro nc = q;
