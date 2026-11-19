@@ -40,8 +40,11 @@ static void testarConstantes() {
 static void testarPoliticaDoSom() {
   for (EstadoFisico e : ESTADOS) {
     for (TendenciaLocal t : TENDENCIAS) {
+      // Regra provisoria (2026-11-19, a confirmar pelo grupo): TRANSBORDANDO tambem
+      // soa enquanto a tendencia for INSUFICIENTE (ex.: logo apos um reinicio).
       bool esperado = (e == EstadoFisico::ALAGADO) ||
-                      (e == EstadoFisico::TRANSBORDANDO && t == TendenciaLocal::SUBINDO);
+                      (e == EstadoFisico::TRANSBORDANDO &&
+                       (t == TendenciaLocal::SUBINDO || t == TendenciaLocal::INSUFICIENTE));
       checar(somPermitido(e, t) == esperado, "politica do som " + nome(e, t));
     }
   }
@@ -52,8 +55,18 @@ static void testarPoliticaDoSom() {
          "ALAGADO soa mesmo com leitura desatualizada");
   checar(!somPermitido(EstadoFisico::TRANSBORDANDO, TendenciaLocal::ESTAVEL),
          "TRANSBORDANDO estavel nao soa");
-  checar(!somPermitido(EstadoFisico::TRANSBORDANDO, TendenciaLocal::INSUFICIENTE),
-         "TRANSBORDANDO com tendencia insuficiente nao soa");
+  checar(somPermitido(EstadoFisico::TRANSBORDANDO, TendenciaLocal::INSUFICIENTE),
+         "TRANSBORDANDO com tendencia INSUFICIENTE soa (regra provisoria)");
+  checar(!somPermitido(EstadoFisico::TRANSBORDANDO, TendenciaLocal::DESATUALIZADO),
+         "TRANSBORDANDO com tendencia DESATUALIZADO continua calado");
+  checar(!somPermitido(EstadoFisico::TRANSBORDANDO, TendenciaLocal::INDETERMINADO),
+         "TRANSBORDANDO com tendencia INDETERMINADO continua calado");
+  checar(!somPermitido(EstadoFisico::TRANSBORDANDO, TendenciaLocal::DESCENDO),
+         "TRANSBORDANDO descendo continua calado");
+  checar(!somPermitido(EstadoFisico::ENCHENDO, TendenciaLocal::INSUFICIENTE),
+         "ENCHENDO com tendencia INSUFICIENTE nao soa");
+  checar(!somPermitido(EstadoFisico::NORMAL, TendenciaLocal::INSUFICIENTE),
+         "NORMAL com tendencia INSUFICIENTE nao soa");
   checar(!somPermitido(EstadoFisico::ENCHENDO, TendenciaLocal::SUBINDO),
          "ENCHENDO subindo nao soa");
   checar(!somPermitido(EstadoFisico::NORMAL, TendenciaLocal::SUBINDO), "NORMAL nao soa");
@@ -220,20 +233,22 @@ static void testarSinalDeBytes() {
   }
   checar(igual, "bytes validos dao a mesma saida que os enums (24 combinacoes)");
 
-  // Tendencia 0xFF ou invalida conta como INSUFICIENTE: TRANSBORDANDO nao soa...
-  bool calado = true, vermelho = true;
+  // Tendencia 0xFF ou invalida conta como INSUFICIENTE: TRANSBORDANDO soa (regra
+  // provisoria) com o mesmo padrao do ALAGADO, e o LED vermelho segue fixo...
+  bool igual2 = true, soou = false, vermelho = true;
   const uint8_t tendRuim[] = {0xFF, 6, 9};
   for (uint8_t t : tendRuim) {
     for (uint32_t ms = 0; ms < 2 * SOM_CICLO_MS; ms += 10) {
       SaidaSinalizacao s = calcularSinalizacaoDeBytes((uint8_t)EstadoFisico::TRANSBORDANDO, t, ms);
-      calado = calado && !s.buzzer;
+      igual2 = igual2 && s.buzzer == calcularSinalizacao(EstadoFisico::ALAGADO, TendenciaLocal::SUBINDO, ms).buzzer;
+      soou = soou || s.buzzer;
       vermelho = vermelho && s.ledVermelho;
     }
   }
-  checar(calado, "TRANSBORDANDO com tendencia invalida (0xFF, 6, 9): buzzer calado");
+  checar(soou && igual2, "TRANSBORDANDO com tendencia invalida (0xFF, 6, 9): buzzer soa no padrao dos 3 pulsos");
   checar(vermelho, "TRANSBORDANDO com tendencia invalida: LED vermelho continua aceso");
 
-  // ...mas ALAGADO soa sempre, mesmo sem tendencia.
+  // ...e ALAGADO soa sempre, mesmo sem tendencia.
   bool soa = false;
   for (uint32_t ms = 0; ms < SOM_CICLO_MS; ms++) {
     soa = soa || calcularSinalizacaoDeBytes((uint8_t)EstadoFisico::ALAGADO, 0xFF, ms).buzzer;
