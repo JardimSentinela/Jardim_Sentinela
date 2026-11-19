@@ -67,17 +67,18 @@ a de maior `timestampDispositivo`; quando ele for nulo, usa-se `recebidoEm`
 ### 3.1 Campos de resposta de `GET /api/jardins/{id}/tendencia`
 
 [SCRUM-28] Detalhes, decisões e avisos em `docs/tendencia-nivel.md` e
-`docs/api-dashboard.md`. **Valores experimentais** (simulador), não calibrados para o
-hardware real.
+`docs/api-dashboard.md`. Valores **PROVISÓRIOS** (ver `docs/decisoes-tecnicas.md` §5.2), não calibrados com
+dados de campo.
 
 | Campo                             | Tipo         | Descrição                                                    |
 | --------------------------------- | ------------ | ------------------------------------------------------------ |
 | `jardimId`                        | string       | Id do jardim                                                 |
-| `tendencia`                       | string (enum)| `ENCHENDO`, `ESTAVEL`, `DRENANDO`, `INSUFICIENTE`, `INDETERMINADO` ou `DESATUALIZADO` |
+| `tendencia`                       | string (enum)| `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`, `INDETERMINADO` ou `DESATUALIZADO` |
 | `leiturasValidas`                 | inteiro      | Leituras usadas na janela (no máximo 5)                      |
 | `leiturasDescartadas`             | inteiro      | Leituras inválidas **examinadas** (não o total no banco)     |
 | `janelaLeituras`                  | inteiro      | Tamanho da janela (5)                                        |
 | `toleranciaCm`                    | decimal (cm) | Tolerância usada (configuração do backend)                   |
+| `idadeMaximaSegundos`             | inteiro (s)  | Idade máxima usada para `DESATUALIZADO` (180 por padrão; 15 na simulação). PROVISÓRIO |
 | `confiabilidadeCronologia`        | string       | Sempre `"NAO_VALIDADA"` no MVP                               |
 | `semTimestampDispositivoNaJanela` | booleano     | Alguma leitura da janela não tem `timestampDispositivo`; sinal informativo |
 | `multiplosSensorId`               | booleano     | Mais de um `sensorId` na janela; sinal informativo           |

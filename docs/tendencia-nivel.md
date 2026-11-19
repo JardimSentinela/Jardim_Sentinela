@@ -43,14 +43,14 @@ consecutivas e retorna resultado consistente.
 | D2 | Tamanho da janela | **N = 5 leituras** (4 intervalos) |
 | D3 | Tolerância | **1,5 cm**, absoluta, configurável, recebida como argumento pela função pura |
 | D4 | Limite | `ESTAVEL` quando `|variação| <= tolerância` (inclusivo), comparação exata com `BigDecimal` |
-| D5 | Estados | 6: `ENCHENDO`, `ESTAVEL`, `DRENANDO`, `INSUFICIENTE`, `INDETERMINADO`, `DESATUALIZADO` |
+| D5 | Estados | 6: `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`, `INDETERMINADO`, `DESATUALIZADO` |
 | D6 | Precedência | `INSUFICIENTE → DESATUALIZADO → INDETERMINADO → tendência calculada` |
 | D7 | Cronologia (C1) | `timestampDispositivo`, com `recebidoEm` quando ausente; **nunca** afirmada como validada |
 | D8 | Empates (A3) | Empate = conjunto de possibilidades; sem desempate por `id` ou por nível |
 | D9 | Série (F1) | Uma série por jardim, todas as leituras, sem tendência por sensor |
 | D10 | Leitura válida | `nivelCm` não nulo, finito e `>= 0`, **e** com alguma referência temporal (`timestampDispositivo` ou `recebidoEm`); inválidas são descartadas e contadas |
 | D11 | Histórico insuficiente | Menos de 5 leituras válidas → `INSUFICIENTE` (HTTP 200); 404 só sem nenhuma leitura |
-| D12 | Idade | Limite provisório de **30 s**, configurável, sobre `recebidoEm`; exatamente 30 s ainda é atual |
+| D12 | Idade | Limite PROVISÓRIO de **180 s** (3 vezes o snapshot de 60 s; 15 s na simulação), configurável, sobre `recebidoEm`; exatamente o limite ainda é atual |
 | D13 | Endpoint | `GET /api/jardins/{id}/tendencia`, DTO próprio (planejado) |
 | D14 | Fonte dos dados (P3) | Consulta nova só para a SW-14; SW-06 e SW-07 inalteradas; divergência documentada |
 | D15 | Testes | Séries construídas à mão; simulador só para observação e regressão; **TDD (RED → GREEN → REFACTOR) obrigatório** |
@@ -67,8 +67,8 @@ Dada uma janela de N = 5 leituras em ordem cronológica `n1 … n5`:
 ```
 variação = n5 − n1            (positivo = o nível subiu)
 
-variação >  +tolerância  →  ENCHENDO
-variação <  −tolerância  →  DRENANDO
+variação >  +tolerância  →  SUBINDO
+variação <  −tolerância  →  DESCENDO
 caso contrário           →  ESTAVEL     (|variação| <= tolerância)
 ```
 
@@ -106,7 +106,7 @@ enum, dois usos da tolerância e muito mais casos de teste.
 |---|---|---|---|
 | Janela N | 5 leituras | constante `CalculadoraTendencia.TAMANHO_JANELA` | **implementado** |
 | Tolerância | 1,5 cm | propriedade `jardimsentinela.tendencia.tolerancia-cm`; recebida como argumento pela função pura | **implementado** (valor negativo, `NaN` ou infinito impedem a inicialização) |
-| Idade máxima | 30 s | propriedade `jardimsentinela.tendencia.idade-maxima` (formatos `30s`, `PT30S`); recebida como argumento pela função pura, junto com o "agora" | **implementado** (valor negativo impede a inicialização) |
+| Idade máxima | 180 s (15 s no perfil `simulacao`) | propriedade `jardimsentinela.tendencia.idade-maxima` (formatos `180s`, `PT3M`); recebida como argumento pela função pura, junto com o "agora" | **implementado** (valor negativo impede a inicialização) |
 | Tamanho da página | 50 leituras | propriedade `jardimsentinela.tendencia.tamanho-pagina` | **implementado**; só muda o número de consultas, não o resultado |
 
 As propriedades seguem o padrão `jardimsentinela.*` do `application.properties` e são
@@ -121,9 +121,9 @@ da janela (N = 5) é **constante do código** (D2), não propriedade.
 
 | Estado | Definição |
 |---|---|
-| `ENCHENDO` | A variação líquida da janela passou da tolerância, para cima |
+| `SUBINDO` | A variação líquida da janela passou da tolerância, para cima |
 | `ESTAVEL` | `|variação líquida| <= tolerância` (não implica nível constante) |
-| `DRENANDO` | A variação líquida da janela passou da tolerância, para baixo |
+| `DESCENDO` | A variação líquida da janela passou da tolerância, para baixo |
 | `INSUFICIENTE` | Menos de 5 leituras válidas: não há o que calcular |
 | `INDETERMINADO` | A ordem das leituras nas pontas da janela não é definida pelos dados (empate no horário) e as ordens possíveis dão classificações diferentes |
 | `DESATUALIZADO` | A leitura recebida mais recentemente é mais antiga que o limite de idade |
@@ -131,7 +131,7 @@ da janela (N = 5) é **constante do código** (D2), não propriedade.
 **Precedência** quando mais de uma situação vale ao mesmo tempo:
 
 ```
-INSUFICIENTE → DESATUALIZADO → INDETERMINADO → ENCHENDO / ESTAVEL / DRENANDO
+INSUFICIENTE → DESATUALIZADO → INDETERMINADO → SUBINDO / ESTAVEL / DESCENDO
 ```
 
 Sem 5 leituras válidas nada mais se calcula; se os dados estão velhos, o empate
@@ -210,8 +210,8 @@ do mais antigo para o mais novo. Logo, **a leitura recebida por último não é
 necessariamente a mais recente medida**.
 
 Exemplo (jardim drenando de verdade; medições `20 → 16 → 12 → 8`, chegada `8, 20, 16,
-12`): ordenar por recebimento dá `12 − 8 = +4` (`ENCHENDO`); a ordem correta dá
-`8 − 20 = −12` (`DRENANDO`).
+12`): ordenar por recebimento dá `12 − 8 = +4` (`SUBINDO`); a ordem correta dá
+`8 − 20 = −12` (`DESCENDO`).
 
 Por isso **não basta** buscar as N últimas por recebimento e reordenar depois: isso pode
 selecionar as medições erradas. **Ordenar primeiro pela chave correta e só depois
@@ -288,9 +288,9 @@ um grupo empatado como um **conjunto de possibilidades**:
 
 - **Empate numa ponta, estados diferentes → `INDETERMINADO`:** leituras `10,0 (t0)`,
   `11,0 (t1)`, `12,0 (t2)`, `14,0 (t3)` e `10,5 (t3)`. A última pode ser 14,0
-  (variação +4,0, `ENCHENDO`) ou 10,5 (variação +0,5, `ESTAVEL`).
+  (variação +4,0, `SUBINDO`) ou 10,5 (variação +0,5, `ESTAVEL`).
 - **Empate numa ponta, mesmo estado → calculável:** a última pode ser 14,0 ou 13,0;
-  variações +4,0 e +3,0, ambas `ENCHENDO`.
+  variações +4,0 e +3,0, ambas `SUBINDO`.
 - **Empate só no meio → calculável:** não afeta a diferença entre as pontas.
 
 ### 8.3 Escopo
@@ -335,8 +335,9 @@ tratamento.
   `timestampDispositivo` daria semanas e o resultado seria sempre "velho".
 - A idade é calculada sobre a leitura de **maior `recebidoEm` entre todas as leituras
   válidas buscadas**, e não só sobre a janela, para não depender do empate no corte.
-- **Limite:** 30 s, configurável. Idade **menor ou igual** a 30 s é atual; **acima**
-  de 30 s é `DESATUALIZADO`.
+- **Limite (PROVISÓRIO, ver `docs/decisoes-tecnicas.md` §5.2):** 3 vezes o intervalo de
+  snapshot. Hardware: 180 s. Simulação: 15 s (perfil `simulacao`). Configurável. Idade
+  **menor ou igual** ao limite é atual; **acima** é `DESATUALIZADO`.
 - **O que isso mede:** o tempo desde a **última recepção** (silêncio do dispositivo).
   **Não** é a idade real da medição. Numa retransmissão de leituras antigas, o
   `recebidoEm` é novo, então a medição pode ser antiga mesmo com a recepção recente.
@@ -350,9 +351,9 @@ tratamento.
   pois o servidor sempre preenche `recebidoEm`. É uma **limitação conhecida**, e o escopo
   desta exceção não será ampliado agora. Uma recepção **posterior** ao "agora"
   (diferença entre relógios) dá idade negativa e é considerada atual.
-- Os 30 s foram escolhidos só para o **simulador** [Suposição]: o intervalo mais lento
-  é 5 s e a janela de 5 leituras cobre até 20 s. Para o hardware, a periodicidade do
-  snapshot é desconhecida: [Dado a verificar].
+- Atualização (2026-11-19, decisões técnicas §5.2): o limite deixou de ser 30 s (proposta
+  só do simulador) e passou a 3 vezes o snapshot: 180 s no hardware (snapshot de 60 s) e
+  15 s na simulação (snapshot de 5 s).
 
 ---
 
@@ -390,16 +391,17 @@ tratamento.
 **Fora do MVP:** `variacaoLiquidaCm`. Com empates ela seria uma faixa e confundiria o
 dashboard. A tolerância vem da configuração, **não** da requisição.
 
-### Exemplo (formato real; um teste confere o conjunto exato dos 10 campos)
+### Exemplo (formato real; um teste confere o conjunto exato dos 11 campos)
 
 ```json
 {
   "jardimId": "J01",
-  "tendencia": "ENCHENDO",
+  "tendencia": "SUBINDO",
   "leiturasValidas": 5,
   "leiturasDescartadas": 0,
   "janelaLeituras": 5,
   "toleranciaCm": 1.5,
+  "idadeMaximaSegundos": 180,
   "confiabilidadeCronologia": "NAO_VALIDADA",
   "semTimestampDispositivoNaJanela": false,
   "multiplosSensorId": false,
@@ -518,7 +520,7 @@ do código-fonte sem alterá-lo.
 Frações de janelas classificadas como o rótulo esperado para cada jardim. "Troca" é a
 fração de pares de janelas consecutivas com classificação diferente ("pisca-pisca").
 
-| N | T (cm) | J01 ESTAVEL | J02 ENCHENDO | J03 DRENANDO | Troca J01 | Troca máx. (J02, J03) |
+| N | T (cm) | J01 ESTAVEL | J02 SUBINDO | J03 DESCENDO | Troca J01 | Troca máx. (J02, J03) |
 |---|---|---|---|---|---|---|
 | 3 | 0,5 | 33,3% | 99,7% | 96,2% | 52,4% | 6,2% |
 | 3 | 1,0 | 57,8% | 94,7% | 86,2% | 47,0% | 17,9% |
@@ -544,7 +546,7 @@ esse teto.
 o J02 teve zero janelas `ESTAVEL` em cerca de 420 mil, mas essas janelas são
 correlacionadas; a conta teórica dá cerca de 0,0004% de chance, pequena e não nula.
 
-Menor deriva por leitura detectada como `ENCHENDO` em pelo menos 90% das janelas
+Menor deriva por leitura detectada como `SUBINDO` em pelo menos 90% das janelas
 (**teórico**, ruído ±1,0 como J02 e J03, sem limite 0–50), em cm por leitura:
 
 | N | T = 0,5 | T = 1,0 | T = 1,5 | T = 2,0 | T = 3,0 |
@@ -628,12 +630,12 @@ Cenários aprovados (N = 5, tolerância 1,5 cm, níveis em ordem cronológica):
 
 | # | Cenário | Esperado |
 |---|---|---|
-| 1 | `10,11,12,13,14` | `ENCHENDO` (+4) |
-| 2 | `14,13,12,11,10` | `DRENANDO` (−4) |
+| 1 | `10,11,12,13,14` | `SUBINDO` (+4) |
+| 2 | `14,13,12,11,10` | `DESCENDO` (−4) |
 | 3 | `10,10.4,9.8,10.3,10.6` | `ESTAVEL` (+0,6) |
 | 4 | cinco leituras iguais | `ESTAVEL` (0) |
 | 5 | última − primeira = **+1,5** e **−1,5** | `ESTAVEL` nos dois |
-| 6 | **+1,6** e **−1,6** | `ENCHENDO` e `DRENANDO` |
+| 6 | **+1,6** e **−1,6** | `SUBINDO` e `DESCENDO` |
 | 7 | tolerância 0,1 com `1,0 → 1,1` (a falha do `double`) | `ESTAVEL` |
 | 8 | `10,15,10,15,10` | `ESTAVEL` (documenta a limitação) |
 | 9 | `10,20,0,30,11` (só as pontas contam) | `ESTAVEL` (+1) |
@@ -669,7 +671,7 @@ memória, sem alterar a suíte existente. O relógio dos testes é um `RelogioCo
 | Consulta: ordem pela chave (não pelo `recebidoEm`), filtro por jardim, paginação sem perder nem repetir leituras, grupo empatado atravessando a página | `LeituraRepositoryTendenciaTests` |
 | Serviço: cuidado 1 (empate atravessando o corte em várias páginas, com um caso que uma margem fixa erraria), cuidado 2 (inválidas entre as mais recentes), critério de parada (3 páginas, verificado com spy), retransmissão com snapshot primeiro, sinais, idade com `Clock` | `TendenciaServiceTests` |
 | Propriedade da busca: para 400 históricos sorteados (empates, inválidas, sem timestamp) e páginas de 1, 2, 3, 7 e 50 leituras, o resultado do serviço é igual ao da calculadora sobre o histórico inteiro, sem paginação (tendência, `leiturasValidas` e os dois sinais) | `TendenciaServicePaginacaoTests` |
-| Endpoint: os 6 estados com 200, 404 com o corpo padrão, os 10 campos exatos do JSON, `ultimaRecepcaoEm` nulo serializado como `null`, inválidas, empate e retransmissão por POST, leitura sem timestamp por POST, idade de 30 s com `Clock` | `TendenciaEndpointTests` |
+| Endpoint: os 6 estados com 200, 404 com o corpo padrão, os 11 campos exatos do JSON, `ultimaRecepcaoEm` nulo serializado como `null`, inválidas, empate e retransmissão por POST, leitura sem timestamp por POST, idade de 180 s com `Clock` | `TendenciaEndpointTests` |
 | Configuração: tolerância e idade máxima mudam o resultado sem alterar código | `TendenciaConfiguracaoTests`, `TendenciaPropertiesTests` |
 
 Verificação de força (mutação manual, 3 mutações no serviço e no repositório, todas
@@ -679,7 +681,7 @@ ter 5 válidas (sem completar o grupo do corte), ler só a primeira página e or
 com mais de 5 leituras e o snapshot chegando primeiro), que ganhou um teste.
 
 Prova de ponta a ponta com a aplicação empacotada (JAR, H2 em memória, HTTP real): 404,
-`INSUFICIENTE`, `ENCHENDO`, retransmissão fora de ordem, leitura sem timestamp e
+`INSUFICIENTE`, `SUBINDO`, retransmissão fora de ordem, leitura sem timestamp e
 `DESATUALIZADO` com dado envelhecido de verdade; `GET /api/jardins/{id}` e `/leituras`
 continuam respondendo.
 

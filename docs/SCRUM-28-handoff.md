@@ -56,7 +56,7 @@ branch estava no GitHub com os dois commits esperados (`e6eddd9` e `3db18dc`).
 | Testes unitários da função pura (25 cenários) | **IMPLEMENTADOS**: 57 testes em 6 classes, todos passando (ver `tendencia-nivel.md`, seção 14) |
 | Consulta nova `findHistoricoPorChaveCronologica` em `LeituraRepository` | **IMPLEMENTADA** (acréscimo; as consultas existentes não mudaram) |
 | `TendenciaService` (busca em páginas, `Clock`, configuração) | **IMPLEMENTADO** |
-| `TendenciaController` e `TendenciaResponse` (10 campos) | **IMPLEMENTADOS** |
+| `TendenciaController` e `TendenciaResponse` (11 campos, com `idadeMaximaSegundos`) | **IMPLEMENTADOS** |
 | Propriedades `jardimsentinela.tendencia.*` (`TendenciaProperties`) e bean `Clock` (`TendenciaConfig`) | **IMPLEMENTADOS**; valores iniciais no `application.properties` |
 | Testes de integração do endpoint (MockMvc + H2) | **IMPLEMENTADOS**: 43 testes novos |
 | Seção do endpoint em `docs/api-dashboard.md` (e contrato, dicionário) | **ESCRITA** |
@@ -108,7 +108,7 @@ SUCCESS`**: os mesmos 76 mais **43 novos** da integração (`LeituraRepositoryTe
 5, `TendenciaPropertiesTests` 7, `TendenciaConfiguracaoTests` 2, `TendenciaServiceTests` 13,
 `TendenciaServicePaginacaoTests` 1 e `TendenciaEndpointTests` 15). Além da suíte, o
 endpoint foi exercitado por HTTP contra
-o JAR empacotado (H2 em memória): 404, `INSUFICIENTE`, `ENCHENDO`, retransmissão fora de
+o JAR empacotado (H2 em memória): 404, `INSUFICIENTE`, `SUBINDO`, retransmissão fora de
 ordem, leitura sem timestamp e `DESATUALIZADO`.
 
 ## 6. Onde paramos
@@ -135,7 +135,7 @@ pergunta literal **"Faz sentido até aqui?"** depois de cada bloco não trivial.
 3. ✅ `CalculadoraTendencia.calcular(leituras, toleranciaCm, idadeMaxima, agora)`
    (função pura, sem Spring, sem banco, sem relógio global), em ciclos TDD, nos blocos:
    - A: leituras válidas e contagem, última recepção e sinais, `INSUFICIENTE`;
-   - B: `ENCHENDO`, `ESTAVEL`, `DRENANDO` com `BigDecimal` e limites inclusivos;
+   - B: `SUBINDO`, `ESTAVEL`, `DESCENDO` com `BigDecimal` e limites inclusivos;
    - C: ordenação cronológica, janela das 5 mais recentes, empates A3 e oráculo;
    - D: `DESATUALIZADO` com relógio injetado e a precedência dos estados.
 
@@ -168,7 +168,7 @@ tendência`; cronologia por `timestampDispositivo` com `recebidoEm` como alterna
 **nunca validada**; empates como conjunto de possibilidades (A3), sem desempate por
 `id` ou nível; série única por jardim (F1); leitura válida = não nula, finita e
 `>= 0`, inválidas descartadas e contadas; `INSUFICIENTE` com menos de 5 válidas, 404 só
-sem nenhuma leitura; idade de 30 s sobre `recebidoEm`, exatamente 30 s é atual;
+sem nenhuma leitura; idade (hoje 180 s; era 30 s) sobre `recebidoEm`, exatamente o limite é atual;
 endpoint `GET /api/jardins/{id}/tendencia` com campo `ultimaRecepcaoEm`; consulta nova
 (P3) sem mudar SW-06 e SW-07.
 

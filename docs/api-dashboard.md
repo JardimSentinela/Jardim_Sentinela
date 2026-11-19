@@ -71,15 +71,17 @@ curl http://localhost:8080/api/jardins/J01
   "ultimaLeituraEm": "2026-11-19T10:00:00Z",
   "totalLeituras": 1,
   "estado": "ENCHENDO",
-  "tendencia": null
+  "tendencia": "INSUFICIENTE"
 }
 ```
 
 - `estado`: vem do registro mais recente, como o dispositivo enviou (`NORMAL`,
   `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`). A API **não recalcula**. É `null`
   em registros antigos, sem classificação.
-- `tendencia`: será calculada pela API (SW-14). O campo já existe, mas hoje
-  vem sempre `null`.
+- `tendencia`: calculada pela API (SW-14), com a **mesma regra** de
+  `GET /api/jardins/{id}/tendencia`: `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`,
+  `INDETERMINADO` ou `DESATUALIZADO`. No exemplo, a única leitura é menos que as 5 da
+  janela. Não é gravada no banco: é calculada a cada consulta. Não é alerta oficial.
 
 Jardim sem nenhuma leitura ainda → **404** com corpo JSON padronizado
 (`erro: "JARDIM_NAO_ENCONTRADO"`, ver "Erros" abaixo). O dashboard precisa
@@ -106,7 +108,7 @@ curl "http://localhost:8080/api/jardins/J01/leituras?limite=5"
 (hoje, o simulador); nesse caso a ordenação usa `recebidoEm`. `estado`, `tendenciaDispositivo` e `versaoRegra` vêm `null` em registros sem classificação. Jardim sem nenhuma leitura → **404** com o mesmo corpo
 `JARDIM_NAO_ENCONTRADO` do endpoint acima; array vazio não é o mesmo caso.
 
-### `GET /api/jardins/{id}/tendencia` — o jardim está enchendo, estável ou drenando?
+### `GET /api/jardins/{id}/tendencia` — o nível está subindo, estável ou descendo?
 
 [SCRUM-28][SW-14] Endpoint **novo e aditivo**: não altera `GET /api/jardins/{id}` nem
 `GET /api/jardins/{id}/leituras`. Calcula a direção da variação do nível a partir das
@@ -120,11 +122,12 @@ curl http://localhost:8080/api/jardins/J01/tendencia
 ```json
 {
   "jardimId": "J01",
-  "tendencia": "ENCHENDO",
+  "tendencia": "SUBINDO",
   "leiturasValidas": 5,
   "leiturasDescartadas": 0,
   "janelaLeituras": 5,
   "toleranciaCm": 1.5,
+  "idadeMaximaSegundos": 180,
   "confiabilidadeCronologia": "NAO_VALIDADA",
   "semTimestampDispositivoNaJanela": false,
   "multiplosSensorId": false,
@@ -140,6 +143,7 @@ curl http://localhost:8080/api/jardins/J01/tendencia
 | `leiturasDescartadas` | Leituras inválidas (nível nulo, `NaN`, infinito, negativo, ou sem nenhuma data) **examinadas** ao montar a janela. Não é o total de inválidas no banco |
 | `janelaLeituras` | Tamanho da janela (5) |
 | `toleranciaCm` | Tolerância usada, em cm. Vem da configuração do backend, **não** da requisição |
+| `idadeMaximaSegundos` | Idade máxima usada para `DESATUALIZADO`, em segundos (180 por padrão). Vem da configuração. PROVISÓRIO |
 | `confiabilidadeCronologia` | Sempre `"NAO_VALIDADA"` neste MVP (ver avisos) |
 | `semTimestampDispositivoNaJanela` | `true` se alguma leitura da janela não tem `timestampDispositivo` (vale o `recebidoEm`). Sinal informativo |
 | `multiplosSensorId` | `true` se a janela mistura mais de um `sensorId`. Sinal informativo |
@@ -149,12 +153,12 @@ Os 6 valores de `tendencia`:
 
 | Valor | Quando | Sugestão para o dashboard |
 |---|---|---|
-| `ENCHENDO` | A variação líquida da janela passou da tolerância, para cima | Nível subindo |
+| `SUBINDO` | A variação líquida da janela passou da tolerância, para cima | Nível subindo |
 | `ESTAVEL` | A variação líquida ficou dentro da tolerância (inclusive no limite) | Sem tendência clara. **Não** mostrar como "nível parado" (ver avisos) |
-| `DRENANDO` | A variação líquida passou da tolerância, para baixo | Nível descendo |
+| `DESCENDO` | A variação líquida passou da tolerância, para baixo | Nível descendo |
 | `INSUFICIENTE` | Menos de 5 leituras válidas | "Poucos dados" (`leiturasValidas` diz quantos) |
 | `INDETERMINADO` | Há leituras com o mesmo horário e as ordens possíveis levariam a classificações diferentes | "Não dá para determinar" |
-| `DESATUALIZADO` | A última recepção é mais antiga que o limite de idade (30 s por padrão) | "Sem dados recentes" |
+| `DESATUALIZADO` | A última recepção é mais antiga que o limite de idade (180 s por padrão; 15 s no perfil `simulacao`) | "Sem dados recentes" |
 
 Quando mais de uma situação vale, a precedência é: `INSUFICIENTE`, depois
 `DESATUALIZADO`, depois `INDETERMINADO`, depois a tendência. **Os 6 estados respondem
@@ -169,8 +173,9 @@ inválidas, responde 200 (`INSUFICIENTE`).
 - `ESTAVEL` significa que a diferença **entre a primeira e a última** leitura ficou
   dentro da tolerância. O nível pode ter oscilado bastante no meio (`10 → 15 → 10`
   é `ESTAVEL`).
-- **Valores experimentais:** a janela (5), a tolerância (1,5 cm) e a idade máxima (30 s)
-  vêm de experimentos com o **simulador**. **Não estão calibrados para o hardware real.**
+- **Valores PROVISÓRIOS** (ver `docs/decisoes-tecnicas.md` §5.2): a janela (5), a tolerância
+  (1,5 cm) e a idade máxima (180 s = 3 vezes o snapshot de 60 s do hardware; 15 s na
+  simulação, com snapshot de 5 s). **Não estão calibrados com dados de campo.**
 - `ultimaRecepcaoEm` mede o silêncio do dispositivo (quando a API **recebeu**), não a idade
   real da medição: uma retransmissão de leituras antigas tem `ultimaRecepcaoEm` recente.
   `null` quer dizer "atualidade desconhecida" (nenhuma leitura válida com `recebidoEm`):
@@ -186,7 +191,8 @@ inválidas, responde 200 (`INSUFICIENTE`).
 
 **Configuração** (sem alterar código; `application.properties`):
 `jardimsentinela.tendencia.tolerancia-cm` (padrão `1.5`),
-`jardimsentinela.tendencia.idade-maxima` (padrão `30s`) e
+`jardimsentinela.tendencia.idade-maxima` (padrão `180s`; o perfil `simulacao`, com
+`spring.profiles.active=simulacao`, usa `15s`) e
 `jardimsentinela.tendencia.tamanho-pagina` (padrão `50`; só muda o número de consultas,
 não o resultado).
 
