@@ -19,7 +19,7 @@ public record JardimResponse(
                 ultima.getSensorId(),
                 ultima.getNivelCm(),
                 ultima.getBateria(),
-                ultima.getRecebidoEm(),
+                ultima.getTimestampDispositivo() != null ? ultima.getTimestampDispositivo() : ultima.getRecebidoEm(),
                 totalLeituras);
     }
 }

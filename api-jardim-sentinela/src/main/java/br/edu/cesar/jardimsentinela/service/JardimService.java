@@ -24,7 +24,7 @@ public class JardimService {
 
     /** Estado atual do jardim = sua leitura mais recente. Vazio se o jardim nunca enviou dados. */
     public Optional<JardimResponse> buscarJardim(String jardimId) {
-        return leituraRepository.findFirstByJardimIdOrderByRecebidoEmDescIdDesc(jardimId)
+        return leituraRepository.findHistorico(jardimId, PageRequest.of(0, 1)).stream().findFirst()
                 .map(ultima -> JardimResponse.de(ultima, leituraRepository.countByJardimId(jardimId)));
     }
 
@@ -34,7 +34,7 @@ public class JardimService {
             return Optional.empty();
         }
         int limiteEfetivo = Math.min(Math.max(limite, 1), LIMITE_MAXIMO);
-        return Optional.of(leituraRepository.findByJardimIdOrderByRecebidoEmDescIdDesc(
+        return Optional.of(leituraRepository.findHistorico(
                 jardimId, PageRequest.of(0, limiteEfetivo)));
     }
 }

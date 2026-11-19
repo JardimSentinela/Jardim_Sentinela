@@ -6,14 +6,23 @@ import java.util.Optional;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import br.edu.cesar.jardimsentinela.entity.Leitura;
 
 public interface LeituraRepository extends JpaRepository<Leitura, Long> {
 
-    Optional<Leitura> findFirstByJardimIdOrderByRecebidoEmDescIdDesc(String jardimId);
-
-    List<Leitura> findByJardimIdOrderByRecebidoEmDescIdDesc(String jardimId, Pageable pageable);
+    /**
+     * [SCRUM-20][SW-11] Ordenação opção B (docs/decisoes-tecnicas.md §6.2): chave cronológica
+     * COALESCE(timestampDispositivo, recebidoEm), mais recente primeiro, desempate por id.
+     */
+    @Query("""
+            select l from Leitura l
+            where l.jardimId = :jardimId
+            order by coalesce(l.timestampDispositivo, l.recebidoEm) desc, l.id desc
+            """)
+    List<Leitura> findHistorico(@Param("jardimId") String jardimId, Pageable pageable);
 
     boolean existsByJardimId(String jardimId);
 
