@@ -179,17 +179,17 @@ public final class CalculadoraTendencia {
     }
 
     /**
-     * D4: ENCHENDO acima de +tolerância, DRENANDO abaixo de -tolerância e ESTAVEL nos
+     * D4: SUBINDO acima de +tolerância, DESCENDO abaixo de -tolerância e ESTAVEL nos
      * limites (inclusivos). A comparação é exata: BigDecimal.valueOf usa a representação
      * decimal do double (1.1 vira 1.1), sem o erro de 1.1 - 1.0 = 0.10000000000000009.
      */
     private static Tendencia classificar(BigDecimal variacaoCm, double toleranciaCm) {
         BigDecimal tolerancia = BigDecimal.valueOf(toleranciaCm);
         if (variacaoCm.compareTo(tolerancia) > 0) {
-            return Tendencia.ENCHENDO;
+            return Tendencia.SUBINDO;
         }
         if (variacaoCm.compareTo(tolerancia.negate()) < 0) {
-            return Tendencia.DRENANDO;
+            return Tendencia.DESCENDO;
         }
         return Tendencia.ESTAVEL;
     }

@@ -5,7 +5,7 @@ package br.edu.cesar.jardimsentinela.tendencia;
  *
  * Os três primeiros valores são a classificação em si. Os três últimos dizem por que
  * NÃO há tendência atual a informar. Um único campo carrega os dois casos, então não
- * existe combinação inválida (por exemplo, "ENCHENDO" junto de "histórico insuficiente").
+ * existe combinação inválida (por exemplo, "SUBINDO" junto de "histórico insuficiente").
  *
  * Os clientes devem tratar valores desconhecidos de forma segura: novos estados podem
  * ser acrescentados no futuro.
@@ -16,7 +16,7 @@ package br.edu.cesar.jardimsentinela.tendencia;
 public enum Tendencia {
 
     /** A variação líquida da janela passou da tolerância, para cima. */
-    ENCHENDO,
+    SUBINDO,
 
     /**
      * A variação líquida da janela ficou DENTRO da tolerância (|variação| <= tolerância).
@@ -28,7 +28,7 @@ public enum Tendencia {
     ESTAVEL,
 
     /** A variação líquida da janela passou da tolerância, para baixo. */
-    DRENANDO,
+    DESCENDO,
 
     /** Há menos leituras válidas do que o tamanho da janela. Não há o que calcular. */
     INSUFICIENTE,
