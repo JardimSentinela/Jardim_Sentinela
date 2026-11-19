@@ -1,13 +1,14 @@
 # SW-14 — Identificar tendência de nível (SCRUM-28)
 
 > **Estado deste documento (atualizado em 2026-11-19):** registra as **decisões de
-> domínio e técnicas fechadas**. A implementação está **em andamento**. **Implementado e
-> testado:** o enum `Tendencia`, os records `LeituraNivel` e `ResultadoTendencia` e a
-> **função pura `CalculadoraTendencia`** (validação, janela, classificação, empates,
-> atualidade e precedência), desenvolvida com TDD (ver seção 14). **Ainda planejado, não
-> implementado:** a consulta no repositório, o serviço, o controller, o DTO, as
-> propriedades de configuração, o `Clock` e o endpoint (seções 11 e 12). O andamento está
-> em [`SCRUM-28-handoff.md`](SCRUM-28-handoff.md).
+> domínio e técnicas fechadas**. **Implementado e testado**, com TDD (seção 14): o enum
+> `Tendencia`, os records `LeituraNivel` e `ResultadoTendencia`, a função pura
+> `CalculadoraTendencia`, a consulta no `LeituraRepository`, o `TendenciaService`
+> (busca em páginas, `Clock`, configuração), o `TendenciaController`, o DTO
+> `TendenciaResponse` e as propriedades `jardimsentinela.tendencia.*`: o endpoint
+> `GET /api/jardins/{id}/tendencia` existe e funciona de ponta a ponta (seções 11 e 12).
+> Os parâmetros (N, tolerância, idade) continuam **experimentais, calibrados só no
+> simulador**. O andamento está em [`SCRUM-28-handoff.md`](SCRUM-28-handoff.md).
 
 Legenda de certeza usada neste documento: **[Certo]** confirmado no código ou nos
 dados, **[Provável]** inferência técnica, **[Suposição]** proposta ainda não validada,
@@ -104,13 +105,15 @@ enum, dois usos da tolerância e muito mais casos de teste.
 | Parâmetro | Valor | Como é definido | Estado |
 |---|---|---|---|
 | Janela N | 5 leituras | constante `CalculadoraTendencia.TAMANHO_JANELA` | **implementado** |
-| Tolerância | 1,5 cm | propriedade de configuração; recebida como argumento pela função pura | argumento da função **implementado** (rejeita valor negativo, `NaN` ou infinito); propriedade planejada |
-| Idade máxima | 30 s | propriedade de configuração; recebida como argumento pela função pura (junto com o "agora") | argumento da função **implementado** (rejeita valor negativo); propriedade planejada |
+| Tolerância | 1,5 cm | propriedade `jardimsentinela.tendencia.tolerancia-cm`; recebida como argumento pela função pura | **implementado** (valor negativo, `NaN` ou infinito impedem a inicialização) |
+| Idade máxima | 30 s | propriedade `jardimsentinela.tendencia.idade-maxima` (formatos `30s`, `PT30S`); recebida como argumento pela função pura, junto com o "agora" | **implementado** (valor negativo impede a inicialização) |
+| Tamanho da página | 50 leituras | propriedade `jardimsentinela.tendencia.tamanho-pagina` | **implementado**; só muda o número de consultas, não o resultado |
 
-Os **nomes das propriedades** ainda não foram definidos [Suposição]: seguir o padrão
-`jardimsentinela.*` já usado em `application.properties` (por exemplo
-`jardimsentinela.cors.allowed-origins`). A tolerância **não** será um parâmetro da
-requisição, para que os clientes não escolham o limiar.
+As propriedades seguem o padrão `jardimsentinela.*` do `application.properties` e são
+lidas por `TendenciaProperties` (record validado no construtor). Os valores iniciais
+estão explícitos no `application.properties` de produção (um teste confere). A tolerância
+**não** é parâmetro da requisição, para que os clientes não escolham o limiar. O tamanho
+da janela (N = 5) é **constante do código** (D2), não propriedade.
 
 ---
 
@@ -143,8 +146,12 @@ com os seis valores e a documentação acima; o record `LeituraNivel` (entrada d
 pura, sem `id`, independente da entidade JPA `Leitura`); o record `ResultadoTendencia`
 (`tendencia`, `leiturasValidas`, `leiturasDescartadas`, `semTimestampDispositivoNaJanela`,
 `multiplosSensorId`, `ultimaRecepcaoEm`); e a função pura `CalculadoraTendencia.calcular`.
-A conversão `Leitura` → `LeituraNivel` ficará no serviço (Etapa 6) e não pode descartar,
-arredondar ou substituir valores inválidos.
+A conversão `Leitura` → `LeituraNivel` fica no `TendenciaService` (pacote `service`) e
+não descarta, arredonda nem substitui valores: `NaN`, infinito, negativo e `null`
+chegam intactos à calculadora, que os descarta e conta. Também implementados na Etapa 6:
+`LeituraRepository.findHistoricoPorChaveCronologica`, `TendenciaService`,
+`TendenciaController` (`GET /api/jardins/{id}/tendencia`), `TendenciaResponse`,
+`TendenciaProperties` e `TendenciaConfig` (propriedades e o bean `Clock`).
 
 ---
 
@@ -349,13 +356,14 @@ tratamento.
 
 ---
 
-## 11. Contrato planejado do endpoint (D13) — **não implementado**
+## 11. Contrato do endpoint (D13) — **implementado**
 
 `GET /api/jardins/{id}/tendencia`
 
 - Endpoint **novo e aditivo**: não altera `GET /api/jardins/{id}` nem
   `GET /api/jardins/{id}/leituras`, e não se mistura com a SW-13.
-- O caminho e os campos são decisões deste documento; **não existem ainda no código**.
+- Implementado em `TendenciaController`; os campos estão em `TendenciaResponse`. Guia
+  para o dashboard em `docs/api-dashboard.md`.
 
 ### Códigos HTTP
 
@@ -377,12 +385,12 @@ tratamento.
 | `confiabilidadeCronologia` | Constante `"NAO_VALIDADA"` no MVP |
 | `semTimestampDispositivoNaJanela` | Sinal informativo (seção 7.4) |
 | `multiplosSensorId` | Sinal informativo (seção 7.4) |
-| `ultimaRecepcaoEm` | `recebidoEm` da leitura mais recente recebida (tempo desde a última **recepção**) |
+| `ultimaRecepcaoEm` | `recebidoEm` da leitura mais recente recebida (tempo desde a última **recepção**). `null` quando nenhuma leitura válida tem `recebidoEm`: "atualidade desconhecida", serializado como `null` (um teste confere) |
 
 **Fora do MVP:** `variacaoLiquidaCm`. Com empates ela seria uma faixa e confundiria o
 dashboard. A tolerância vem da configuração, **não** da requisição.
 
-### Exemplo ilustrativo (formato planejado)
+### Exemplo (formato real; um teste confere o conjunto exato dos 10 campos)
 
 ```json
 {
@@ -399,8 +407,10 @@ dashboard. A tolerância vem da configuração, **não** da requisição.
 }
 ```
 
-[Dado a verificar] Semântica exata de `leiturasValidas` quando há mais leituras do que
-a busca traz (a consulta é limitada). Definir na Etapa 6.
+**Semântica fechada (Etapa 6):** `leiturasValidas` é a quantidade usada na janela (no
+máximo 5), independentemente de quantas leituras a busca precisou ler; `leiturasDescartadas`
+são as inválidas **examinadas**, e o serviço para a busca num ponto determinístico (seção
+12), então o número não depende do tamanho da página. Não é o total de inválidas no banco.
 
 ---
 
@@ -430,9 +440,44 @@ SW-07 ao contrato 3.4", com testes de regressão de ordenação (por exemplo
 
 Consequência de projeto: a função pura recebe leituras já suficientes para o corte e
 **não** sabe se faltou buscar mais; **quem decide quando parar de buscar é o serviço**.
-A estratégia exata da consulta (busca em etapas, limites) será projetada na Etapa 6.
-[Provável] O `COALESCE` na ordenação com `Pageable` em JPQL funciona; será validado em
-teste de integração.
+
+### Implementação (Etapa 6)
+
+**Repositório.** `LeituraRepository.findHistoricoPorChaveCronologica(jardimId, pageable)`
+(JPQL): leituras do jardim por `coalesce(timestampDispositivo, recebidoEm) desc, id desc`.
+A expressão está na constante `LeituraRepository.CHAVE_CRONOLOGICA`; a mesma regra em Java
+é `CalculadoraTendencia.chaveCronologica`. [Certo] O `COALESCE` com `Pageable` funciona no
+H2 (testes de integração). O desempate por `id` serve **só** para a paginação ser
+determinística (sem ordem total, o banco poderia repetir ou omitir linhas empatadas entre
+páginas); **não é ordem temporal**, o `id` nem chega à calculadora (`LeituraNivel` não o
+tem) e o empate continua sendo conjunto de possibilidades (A3).
+
+**Serviço, critério de parada** (`TendenciaService`, páginas de `tamanho-pagina`
+leituras, da mais recente para a mais antiga). A busca só para por **uma** de duas razões:
+
+1. **O histórico acabou** (uma página veio menor que o tamanho pedido). Nunca se conclui
+   "insuficiente" antes disso: leituras inválidas, mesmo as mais recentes, não contam para a
+   janela, e a busca segue até achar 5 válidas ou esgotar tudo (cuidado 2).
+2. **Há 5 leituras válidas e o grupo do corte está completo:** apareceu uma leitura válida
+   **estritamente mais antiga** que a 5ª. Como a ordem é decrescente pela chave, isso prova
+   que não há mais leituras com a chave da 5ª. Assim, um empate que atravessa o corte (ou
+   várias páginas) traz **todos** os seus membros, sem margem arbitrária (cuidado 1).
+
+A busca devolve todas as leituras **examinadas** (válidas e inválidas); a calculadora
+descarta e conta as inválidas. O ponto de parada é uma leitura específica, então o
+resultado (inclusive `leiturasDescartadas`) **não depende do tamanho da página**. As regras
+"o que é válido" e "qual é a chave" vêm da própria calculadora
+(`CalculadoraTendencia.ehValida` e `chaveCronologica`), sem duplicação.
+
+**Custo e limites** [Certo]: no pior caso (muitas inválidas ou um grupo empatado enorme) a
+busca lê o histórico do jardim inteiro; não há teto por desenho, pois um teto produziria
+"insuficiente" ou empates truncados falsos. Para o piloto (poucos jardins, ruído
+baixo) é aceitável; se o volume crescer, o caminho é limitar a busca por tempo ou criar um
+índice (evolução, seção 15).
+
+**Idade e `ultimaRecepcaoEm`:** é o maior `recebidoEm` entre as leituras válidas
+**buscadas** (as examinadas até o ponto de parada). Uma leitura mais antiga pela chave,
+recebida muito depois e fora do que foi buscado, não entra nessa conta.
 
 ---
 
@@ -613,6 +658,31 @@ Integração: um caso por estado do enum, o 404 do jardim sem leitura, o formato
 retransmissão via POST com timestamps fora de ordem, leituras sem timestamp,
 `confiabilidadeCronologia` constante, e a idade com um `Clock` controlável.
 
+### Cobertura da integração (Etapa 6, com TDD)
+
+Testes em `.../src/test/java/br/edu/cesar/jardimsentinela/tendencia/`, com MockMvc e H2 em
+memória, sem alterar a suíte existente. O relógio dos testes é um `RelogioControlado`
+(importado por `RelogioDeTesteConfig`), que substitui o `Clock` da aplicação.
+
+| Verificação | Classe de teste |
+|---|---|
+| Consulta: ordem pela chave (não pelo `recebidoEm`), filtro por jardim, paginação sem perder nem repetir leituras, grupo empatado atravessando a página | `LeituraRepositoryTendenciaTests` |
+| Serviço: cuidado 1 (empate atravessando o corte em várias páginas, com um caso que uma margem fixa erraria), cuidado 2 (inválidas entre as mais recentes), critério de parada (3 páginas, verificado com spy), retransmissão com snapshot primeiro, sinais, idade com `Clock` | `TendenciaServiceTests` |
+| Propriedade da busca: para 400 históricos sorteados (empates, inválidas, sem timestamp) e páginas de 1, 2, 3, 7 e 50 leituras, o resultado do serviço é igual ao da calculadora sobre o histórico inteiro, sem paginação (tendência, `leiturasValidas` e os dois sinais) | `TendenciaServicePaginacaoTests` |
+| Endpoint: os 6 estados com 200, 404 com o corpo padrão, os 10 campos exatos do JSON, `ultimaRecepcaoEm` nulo serializado como `null`, inválidas, empate e retransmissão por POST, leitura sem timestamp por POST, idade de 30 s com `Clock` | `TendenciaEndpointTests` |
+| Configuração: tolerância e idade máxima mudam o resultado sem alterar código | `TendenciaConfiguracaoTests`, `TendenciaPropertiesTests` |
+
+Verificação de força (mutação manual, 3 mutações no serviço e no repositório, todas
+detectadas, e as duas do serviço detectadas também pelo teste de propriedade): parar ao
+ter 5 válidas (sem completar o grupo do corte), ler só a primeira página e ordenar por
+`recebidoEm`. A terceira revelou uma lacuna (a retransmissão só falha
+com mais de 5 leituras e o snapshot chegando primeiro), que ganhou um teste.
+
+Prova de ponta a ponta com a aplicação empacotada (JAR, H2 em memória, HTTP real): 404,
+`INSUFICIENTE`, `ENCHENDO`, retransmissão fora de ordem, leitura sem timestamp e
+`DESATUALIZADO` com dado envelhecido de verdade; `GET /api/jardins/{id}` e `/leituras`
+continuam respondendo.
+
 ### Cobertura dos 25 cenários pela função pura (estado atual)
 
 Testes em `api-jardim-sentinela/src/test/java/br/edu/cesar/jardimsentinela/tendencia/`
@@ -671,6 +741,14 @@ representam as decisões de domínio deste documento.
 12. **Atualidade desconhecida sem `recebidoEm`:** com leituras válidas sem nenhum
     `recebidoEm`, a idade não pode ser medida; o resultado traz `ultimaRecepcaoEm = null`
     e não afirma que o dado está atual (seção 10).
+13. **Custo da busca sem teto:** com muitas leituras inválidas ou um grupo empatado
+    enorme, o serviço lê o histórico do jardim inteiro (seção 12). É desenho: um teto
+    geraria "insuficiente" ou empates truncados falsos.
+14. **`ultimaRecepcaoEm` sobre as leituras buscadas:** não considera uma leitura antiga pela
+    chave, recebida depois, que ficou fora do que foi lido.
+15. **Paginação por deslocamento** (`OFFSET`): leituras gravadas durante uma busca podem
+    deslocar as páginas. [Provável] Sem efeito prático com a frequência de leitura atual;
+    a busca é curta.
 
 ### Evoluções futuras
 
@@ -681,6 +759,9 @@ representam as decisões de domínio deste documento.
   do time (contrato, seção 3.3). Observação: `bootId` é aleatório e **não** indica
   qual boot veio antes.
 - **Unificar a ordenação** de SW-06 e SW-07 com a SW-14 (contrato, seção 3.4).
+- **Limitar ou indexar a busca** se o volume crescer: índice em `(jardimId, chave
+  cronológica)` ou limite por tempo (a decisão de produto sobre o que fazer ao atingir o
+  limite é de domínio).
 - **Medida de oscilação** (`máximo − mínimo`) sem necessariamente criar estado novo.
 - **Análise de sensibilidade** para relógios mistos e timestamps no futuro.
 - **Calibração dos parâmetros** no hardware: coletar leituras com o nível parado,
@@ -699,13 +780,17 @@ representam as decisões de domínio deste documento.
 2. Validação ponta a ponta do envio do firmware (seção 7.3), incluindo o campo `origem`.
 3. Configuração dos sensores no piloto, calibração e comparabilidade (seção 9).
 4. Periodicidade real do snapshot no hardware, para calibrar a idade máxima.
-5. Estratégia da consulta (Etapa 6). A semântica de `leiturasValidas` para a função pura
-   está fechada (seção 6); falta definir como o serviço informa a contagem quando a
-   consulta traz mais leituras do que a janela.
-6. Nomes das propriedades de configuração (tolerância e idade máxima).
+5. ~~Estratégia da consulta e semântica de `leiturasValidas`~~ **Fechado na Etapa 6**
+   (seções 6, 11 e 12): busca em páginas com critério de parada determinístico;
+   `leiturasValidas` é o usado na janela (no máximo 5).
+6. ~~Nomes das propriedades de configuração~~ **Fechado:** `jardimsentinela.tendencia.
+   tolerancia-cm`, `idade-maxima` e `tamanho-pagina` (seção 4).
 7. ~~Comportamento sem nenhum `recebidoEm` nas leituras válidas~~ **Fechado em
    2026-11-19** (seção 10): `ultimaRecepcaoEm = null`, sem `DESATUALIZADO` e sem afirmar
-   que o dado está atual. Na Etapa 6, o DTO deve manter o `null` visível, sem preenchê-lo.
+   que o dado está atual. O DTO mantém o `null` visível (um teste confere).
+8. Ticket de acompanhamento "alinhar SW-06 e SW-07 ao contrato 3.4 (ordenação)": **ainda
+   não registrado** (o ambiente de desenvolvimento não alcança o Jira). A divergência
+   temporária está documentada na seção 12 e em `docs/api-dashboard.md`.
 
 ## 17. Referências
 

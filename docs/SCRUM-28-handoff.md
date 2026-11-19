@@ -6,8 +6,11 @@
 > As **decisões** estão em [`tendencia-nivel.md`](tendencia-nivel.md). Este documento
 > diz **onde o trabalho parou** e **como retomar**.
 >
-> **Atualizado em 2026-11-19:** a função pura `CalculadoraTendencia` e seus testes estão
-> prontos (seções 3, 5, 6 e 7). A metodologia passou a ser **TDD obrigatório**.
+> **Atualizado em 2026-11-19:** a função pura `CalculadoraTendencia` (commit `4424649`,
+> já no GitHub) e a **integração completa (Etapa 6)** estão implementadas e testadas: o
+> endpoint `GET /api/jardins/{id}/tendencia` funciona de ponta a ponta (seções 3, 5, 6 e
+> 7). A metodologia passou a ser **TDD obrigatório**. A Etapa 6 ainda **não foi
+> commitada** quando este texto foi escrito.
 
 ---
 
@@ -51,19 +54,21 @@ branch estava no GitHub com os dois commits esperados (`e6eddd9` e `3db18dc`).
 | Record `LeituraNivel` (entrada da função pura, 4 campos, sem `id`) | **IMPLEMENTADO** e compilado |
 | Função pura `CalculadoraTendencia` | **IMPLEMENTADA** (validação, janela, classificação, empates A3, atualidade, precedência) |
 | Testes unitários da função pura (25 cenários) | **IMPLEMENTADOS**: 57 testes em 6 classes, todos passando (ver `tendencia-nivel.md`, seção 14) |
-| Consulta nova em `LeituraRepository` | **PLANEJADO** |
-| `TendenciaService`, `TendenciaController`, `TendenciaResponse` | **PLANEJADO** |
-| Propriedades de configuração (tolerância, idade máxima) e bean `Clock` | **PLANEJADO** |
-| Testes de integração do endpoint | **PLANEJADO** |
-| Seção do endpoint em `docs/api-dashboard.md` | **PLANEJADO** |
-| Endpoint `GET /api/jardins/{id}/tendencia` | **NÃO EXISTE ainda** |
+| Consulta nova `findHistoricoPorChaveCronologica` em `LeituraRepository` | **IMPLEMENTADA** (acréscimo; as consultas existentes não mudaram) |
+| `TendenciaService` (busca em páginas, `Clock`, configuração) | **IMPLEMENTADO** |
+| `TendenciaController` e `TendenciaResponse` (10 campos) | **IMPLEMENTADOS** |
+| Propriedades `jardimsentinela.tendencia.*` (`TendenciaProperties`) e bean `Clock` (`TendenciaConfig`) | **IMPLEMENTADOS**; valores iniciais no `application.properties` |
+| Testes de integração do endpoint (MockMvc + H2) | **IMPLEMENTADOS**: 43 testes novos |
+| Seção do endpoint em `docs/api-dashboard.md` (e contrato, dicionário) | **ESCRITA** |
+| Endpoint `GET /api/jardins/{id}/tendencia` | **EXISTE e funciona de ponta a ponta** (verificado também com o JAR empacotado, por HTTP) |
 
-**Código novo da SW-14 até aqui** (tudo no pacote
-`br.edu.cesar.jardimsentinela.tendencia`, em `src/main` e `src/test`): `Tendencia`,
-`LeituraNivel`, `ResultadoTendencia`, `CalculadoraTendencia` e as classes de teste
-`CalculadoraTendencia*Test` mais o helper `LeiturasDeTeste`. Nenhum arquivo existente do
-código (SW-06, SW-07, SW-13, firmware, simulador) foi modificado; só a documentação da
-SW-14 foi atualizada.
+**Código novo da SW-14** (nenhum arquivo de SW-06, SW-07, SW-13, firmware ou simulador
+foi alterado): no pacote `...tendencia`: `Tendencia`, `LeituraNivel`, `ResultadoTendencia`,
+`CalculadoraTendencia`; em `repository`: a consulta nova (acrescentada a
+`LeituraRepository`); em `service`: `TendenciaService`; em `controller`:
+`TendenciaController`; em `dto`: `TendenciaResponse`; em `config`: `TendenciaProperties` e
+`TendenciaConfig`; em `application.properties`: as três propriedades. Os testes estão em
+`src/test/.../tendencia/`.
 
 ## 4. Comandos
 
@@ -96,18 +101,21 @@ Em 2026-11-17, nesta máquina, com a branch acima:
 **Importante:** os números acima são do checkpoint de 2026-11-17: a suíte **existente**,
 sem testes da SW-14.
 
-**Atualização de 2026-11-19** (nova máquina, na branch da tarefa, com os arquivos novos
-ainda não commitados): `./mvnw test` executou **76 testes, 0 falhas, 0 erros, `BUILD
-SUCCESS`**: os mesmos 19 existentes (inalterados) mais **57 testes novos** da calculadora
-(`CalculadoraTendenciaTest` 14, `...ClassificacaoTest` 13, `...CronologiaTest` 7,
-`...EmpatesTest` 12, `...AtualidadeTest` 10 e `...OraculoTest` 1).
+**Atualização de 2026-11-19** (nova máquina, branch da tarefa): após a função pura
+(`4424649`, no GitHub), `./mvnw test` executou **76 testes** (os 19 existentes
+inalterados + 57 da calculadora) e, após a Etapa 6, **119 testes, 0 falhas, 0 erros, `BUILD
+SUCCESS`**: os mesmos 76 mais **43 novos** da integração (`LeituraRepositoryTendenciaTests`
+5, `TendenciaPropertiesTests` 7, `TendenciaConfiguracaoTests` 2, `TendenciaServiceTests` 13,
+`TendenciaServicePaginacaoTests` 1 e `TendenciaEndpointTests` 15). Além da suíte, o
+endpoint foi exercitado por HTTP contra
+o JAR empacotado (H2 em memória): 404, `INSUFICIENTE`, `ENCHENDO`, retransmissão fora de
+ordem, leitura sem timestamp e `DESATUALIZADO`.
 
 ## 6. Onde paramos
 
-**Etapas 4 e 5 (função pura) concluídas.** Falta a revisão da pessoa responsável e o
-primeiro checkpoint Git desse trabalho (os arquivos novos ainda não estavam commitados
-quando este texto foi escrito). **Próximo passo: Etapa 6 (integração: repositório,
-serviço, controller, DTO e configuração).**
+**Etapas 4, 5 e 6 concluídas.** A função pura está no GitHub (`4424649`). A **Etapa 6
+está implementada e testada, mas ainda não commitada**: falta a revisão da pessoa
+responsável e o checkpoint Git. **Próximo passo: Etapa 7 (validação final).**
 
 Modo de trabalho combinado (também no prompt de retomada): a pessoa conduz as decisões
 de domínio; o assistente age como professor e par de programação, com **TDD
@@ -136,15 +144,17 @@ junto com a implementação (TDD), então esta etapa é revisar a cobertura dos 
 (tabela em `tendencia-nivel.md`, seção 14), os casos de borda e a execução da suíte
 completa. ✅ Feita para a função pura.
 
-**Etapa 6 — integração.** Consulta nova em `LeituraRepository`, `TendenciaService`
-(com `Clock` e configuração), `TendenciaController`, `TendenciaResponse`, propriedades,
-testes de integração (MockMvc, H2 em memória). **Também com TDD**: os testes de
-repositório e de MockMvc entram antes da implementação correspondente. **Aqui valem os
-dois cuidados obrigatórios da consulta** (seção 9).
+**Etapa 6 — integração. ✅ Feita (com TDD).** Consulta nova em `LeituraRepository`,
+`TendenciaService` (com `Clock` e configuração), `TendenciaController`,
+`TendenciaResponse`, propriedades e testes de integração (MockMvc, H2 em memória). Os dois
+cuidados obrigatórios da consulta estão implementados e testados (seção 9;
+`tendencia-nivel.md`, seção 12).
 
-**Etapa 7 — validação final.** Suíte completa, revisão do diff, seção do endpoint em
-`docs/api-dashboard.md`, confirmação de que SW-06, SW-07 e a SW-13 não foram alteradas,
-e o ticket de acompanhamento para unificar a ordenação.
+**Etapa 7 — validação final. Pendente.** Revisão do diff pela pessoa responsável,
+checkpoint Git da Etapa 6, confirmação de que SW-06, SW-07 e a SW-13 não foram alteradas
+(a suíte existente passa sem mudança) e o **ticket de acompanhamento** para unificar a
+ordenação de SW-06 e SW-07 com a SW-14 (ainda não registrado no Jira). A seção do
+endpoint em `docs/api-dashboard.md` já foi escrita na Etapa 6.
 
 Cada etapa só avança com **autorização explícita**. Commit, push, merge e PR também só
 com autorização explícita.
@@ -167,7 +177,9 @@ correta.
 
 ## 9. Pendências técnicas e decisões ainda não implementadas
 
-**Cuidados obrigatórios da futura consulta (Etapa 6):**
+**Cuidados obrigatórios da consulta (Etapa 6): ✅ implementados e testados** (busca em
+páginas com critério de parada determinístico; `tendencia-nivel.md`, seção 12). O texto
+original dos cuidados:
 
 1. **Não usar margem arbitrária** para tratar empates no limite das N leituras: recuperar
    **todos os candidatos do grupo empatado**, sem deixar a paginação produzir
@@ -180,19 +192,25 @@ correta.
 
 - ~~A função pura recebe a entidade `Leitura` ou um tipo próprio?~~ **Resolvido
   (2026-11-19):** tipo próprio e imutável `LeituraNivel`, sem `id`.
-- Semântica de `leiturasValidas`: **resolvida para a função pura** (quantidade usada na
-  janela, no máximo 5). [Dado a verificar] Falta decidir, na Etapa 6, como o serviço
-  informa a contagem quando a consulta traz mais leituras do que a janela.
+- ✅ Semântica de `leiturasValidas` **fechada:** quantidade usada na janela (no máximo 5),
+  independente de quantas leituras a busca leu; `leiturasDescartadas` são as inválidas
+  examinadas (não o total no banco).
 - ✅ **Decidido (2026-11-19):** com leituras válidas sem nenhum `recebidoEm`, a função
   devolve `ultimaRecepcaoEm = null`, não declara `DESATUALIZADO` e **não afirma que o
   dado está atual** (ver `tendencia-nivel.md`, seção 10). Limitação conhecida; escopo não
   ampliado. As verificações de tolerância e de idade máxima (negativo, `NaN`, infinito)
   foram mantidas.
-- Nomes das propriedades de configuração (sugestão: prefixo `jardimsentinela.tendencia.`).
-- Estratégia concreta da consulta e validação do `COALESCE` em ordenação com paginação.
-- Bean `Clock` para testar a idade de forma determinística.
+- ✅ Propriedades: `jardimsentinela.tendencia.tolerancia-cm`, `idade-maxima` e
+  `tamanho-pagina`. A janela (N = 5) é constante do código.
+- ✅ Consulta: `COALESCE` com paginação validado em H2; critério de parada no serviço.
+- ✅ Bean `Clock` (`TendenciaConfig`); os testes o substituem por um `RelogioControlado`.
 - Branch-base oficial (`develop` foi usada provisoriamente).
-- Ticket de acompanhamento: alinhar SW-06 e SW-07 ao contrato 3.4 (ordenação).
+- Ticket de acompanhamento: alinhar SW-06 e SW-07 ao contrato 3.4 (ordenação). **Ainda
+  não registrado.** Enquanto isso, `GET /api/jardins/{id}/leituras` (por `recebidoEm`) e
+  a tendência (pela chave cronológica) podem divergir; está documentado em
+  `docs/api-dashboard.md`.
+- Custo da busca sem teto em históricos enormes de leituras inválidas (aceito no MVP;
+  `tendencia-nivel.md`, seção 12).
 - [Dado a verificar] Validação ponta a ponta do envio do firmware
   (`seq`, `bootId`, `horaSincronizada`, `origem`).
 - [Dado a verificar] Configuração dos sensores do piloto, calibração e periodicidade do
@@ -202,7 +220,7 @@ correta.
 
 Estes arquivos **não** vão para o GitHub e **não** são necessários para continuar:
 
-| Arquivo (pasta temporária `scratchpad` do Claude Code, fora do repositório) | O que é |
+| Arquivo (pasta temporária `scratchpad` do ambiente de desenvolvimento, fora do repositório) | O que é |
 |---|---|
 | `AnaliseTendencia.java` | Análise descartável de N com o gerador real (teórico, Monte Carlo e sementes oficiais) |
 | `AnaliseGrade.java` | Análise descartável da grade N × T |
@@ -222,12 +240,12 @@ com o assistente.
 
 ## 11. Como continuar em outro computador
 
-1. **Pré-requisitos:** Git, um JDK (veja a seção 4) e o Claude Code instalado e
-   autenticado.
+1. **Pré-requisitos:** Git, um JDK (veja a seção 4) e um assistente de programação
+   instalado e autenticado.
 2. **Obter a branch** (depois que ela estiver no GitHub):
 
    ```bash
-   git clone https://github.com/RiosGabri/Jardim_Sentinela.git
+   git clone https://github.com/JardimSentinela/Jardim_Sentinela.git
    cd Jardim_Sentinela
    git fetch origin
    git switch feat/SCRUM-28-identificar-tendencia-nivel
@@ -238,7 +256,7 @@ com o assistente.
 
    ```bash
    git branch --show-current     # deve imprimir: feat/SCRUM-28-identificar-tendencia-nivel
-   git log --oneline -3          # o commit de baixo deve ser 1652df3 (Merge PR #18)
+   git log --oneline -6          # os commits [SCRUM-28] ficam acima de 1652df3 (Merge PR #18, a base)
    git status -sb                # deve estar limpo
    ls api-jardim-sentinela/src/main/java/br/edu/cesar/jardimsentinela/tendencia
    ls docs/tendencia-nivel.md docs/SCRUM-28-handoff.md
@@ -248,14 +266,14 @@ com o assistente.
 
    ```bash
    cd api-jardim-sentinela
-   ./mvnw test        # espera-se: 19 testes, 0 falhas (suíte existente)
+   ./mvnw test        # espera-se: 119 testes, 0 falhas (19 da suíte existente + 100 da SW-14)
    ```
 
-5. Abrir o Claude Code **na raiz do repositório** e colar o prompt abaixo.
-6. **Primeira tarefa de programação na retomada:** o record `ResultadoTendencia`
-   (Etapa 4, passo 2), depois de o assistente explicar o conceito de `record`.
+5. Abrir o assistente de programação **na raiz do repositório** e colar o prompt abaixo.
+6. **Primeira tarefa na retomada:** a Etapa 7 (validação final): revisar o diff, conferir o
+   checkpoint Git da Etapa 6 e registrar o ticket de acompanhamento (seção 7).
 
-## 12. Prompt de retomada (copie e cole no Claude Code)
+## 12. Prompt de retomada (copie e cole no assistente de programação)
 
 ```text
 Estou retomando a SW-14 (SCRUM-28, "Identificar tendência de nível") do projeto
@@ -269,16 +287,18 @@ Antes de qualquer coisa, leia na íntegra:
 
 Depois confira o ambiente SEM alterar nada: git branch --show-current (deve ser
 feat/SCRUM-28-identificar-tendencia-nivel), git status -sb, git log --oneline -3, e
-rode "cd api-jardim-sentinela && ./mvnw test" (espera-se 19 testes, 0 falhas, que são
-da suíte existente; a SW-14 ainda não tem testes). Me mostre o resultado.
+rode "cd api-jardim-sentinela && ./mvnw test" (espera-se 119 testes, 0 falhas: 19 da
+suíte existente e 100 da SW-14). Me mostre o resultado.
 
-Estado: Etapa 4, passo 1 concluído (enum Tendencia criado). Próximo passo: o record
-ResultadoTendencia.
+Estado: Etapas 4, 5 e 6 concluídas (função pura, repositório, serviço, controller, DTO e
+configuração); o endpoint GET /api/jardins/{id}/tendencia existe e está testado. Próximo
+passo: Etapa 7 (validação final).
 
 Regras de trabalho:
 - As decisões de domínio estão FECHADAS; não as reabra, salvo bloqueio concreto.
-- Um passo por vez. Antes de usar um conceito novo (record, Comparator, BigDecimal,
-  Clock, @Query...), explique-o com um exemplo mínimo fora do repo e depois aplique.
+- TDD obrigatório (RED, GREEN, REFACTOR). Antes de usar um conceito novo, explique-o com
+  um exemplo mínimo fora do repo e depois aplique. Avance em blocos de ciclos, sem pedir
+  OK a cada teste, e pare no fim de cada etapa para minha revisão.
 - Depois de cada bloco de código não trivial, pergunte literalmente "Faz sentido até
   aqui?" e espere minha resposta.
 - Não confunda funcionalidade planejada com implementada. Não invente classes, campos
@@ -288,9 +308,9 @@ Regras de trabalho:
 - Não altere SW-06, SW-07 nem a SW-13. Não rode comandos destrutivos (reset --hard,
   clean, rm, force push) sem me avisar antes.
 - NÃO faça commit, push, merge nem PR sem minha autorização explícita.
-- Lembre dos dois cuidados obrigatórios da consulta (seção 9 do handoff) para a
-  Etapa 6.
+- Os dois cuidados obrigatórios da consulta (seção 9 do handoff) já estão implementados
+  e testados; não os enfraqueça.
 
-Comece conferindo o ambiente e, em seguida, me explique o que é um "record" em Java
-antes de criarmos o ResultadoTendencia.
+Comece conferindo o ambiente e, em seguida, me apresente um resumo do estado e
+proponha os passos da Etapa 7.
 ```

@@ -43,7 +43,7 @@ public final class CalculadoraTendencia {
      * recebidoEm. Fica num único lugar para a futura unificação com a consulta (D14).
      * Só é chamada para leituras válidas, que têm ao menos uma das duas datas.
      */
-    static Instant chaveCronologica(LeituraNivel leitura) {
+    public static Instant chaveCronologica(LeituraNivel leitura) {
         return leitura.timestampDispositivo() != null
                 ? leitura.timestampDispositivo()
                 : leitura.recebidoEm();
@@ -168,8 +168,9 @@ public final class CalculadoraTendencia {
      * D10: uma leitura é válida se o nível é não nulo, finito (nem NaN nem infinito) e
      * maior ou igual a zero, e se existe alguma referência temporal para posicioná-la
      * (timestampDispositivo ou recebidoEm). Não se inventa data para quem não tem.
+     * Pública para o serviço decidir quando parar de buscar com a mesma regra.
      */
-    private static boolean ehValida(LeituraNivel leitura) {
+    public static boolean ehValida(LeituraNivel leitura) {
         Double nivel = leitura.nivelCm();
         boolean nivelValido = nivel != null && Double.isFinite(nivel) && nivel >= 0;
         boolean temReferenciaTemporal =
