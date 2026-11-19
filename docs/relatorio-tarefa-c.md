@@ -99,6 +99,24 @@ Justificativa do espaçamento:
 | 1 | **§8:** o estado vem da **sonda HW-02** (0–100 cm, contínua). Os T1592 só validam o protocolo | Decidido pela Júlia; **grupo precisa confirmar** |
 | 2 | **§5.2 (relógio):** dentro do boot, o `tMs` é o relógio usado para a idade. O `timestamp` absoluto **não** é usado. Pergunta aberta: usar o absoluto quando o relógio for válido? | Júlia aceitou o `tMs`; **grupo precisa confirmar** |
 
+### 5.2.1 Regra provisória do som (decidida em 2026-11-19, **a confirmar pelo grupo**)
+
+| Estado | Regra do buzzer |
+|---|---|
+| `ALAGADO` | soa **sempre** (não mudou) |
+| `TRANSBORDANDO` | soa com tendência `SUBINDO` (regra normal, **não mudou**) **ou** enquanto a tendência for `INSUFICIENTE` (**regra provisória nova**) |
+| `NORMAL`, `ENCHENDO` | calado |
+
+- **Motivo:** depois de um reinício a tendência fica `INSUFICIENTE` por cerca de 4 min no hardware (5 snapshots), e antes a regra
+  deixava o `TRANSBORDANDO` calado nesse período, mesmo com a água subindo.
+- **Continuam calados no `TRANSBORDANDO`:** `ESTAVEL`, `DESCENDO`, `INDETERMINADO` e `DESATUALIZADO`.
+  Tendência inválida (`0xFF`) conta como `INSUFICIENTE`, então também soa.
+- **Custo conhecido:** a cada reinício com o jardim em `TRANSBORDANDO`, o buzzer soa até a janela encher, mesmo com o nível
+  estável ou caindo. O projeto trata o alarme falso como o principal risco (§3.1 das decisões), então o grupo precisa pesar
+  esse custo contra o silêncio logo após o reinício.
+- **Pendência:** confirmação do grupo. Até lá, a regra é **provisória** e fica em um único lugar (`somPermitido`, `sinalizacao.cpp`).
+- **Código e testes:** `sinalizacao.cpp`/`.h` e `test_sinalizacao.cpp` (commits `test:` e `feat:` de 2026-11-19, regra provisória do som).
+
 ### 5.3 Decisões de implementação (não estavam nas decisões técnicas)
 
 1. **Boot atual é parâmetro** (`bootIdAtual`), não o boot do último item: um retardatário de boot antigo não vira o atual. `seq` e `tMs` não são comparáveis entre boots.
@@ -116,8 +134,8 @@ Justificativa do espaçamento:
 
 | Risco | Detalhe |
 |---|---|
-| **Reinício durante a subida** | Após um boot a tendência é `INSUFICIENTE` por ~4 min (hardware). Nesse período o `TRANSBORDANDO` **não soa** (só soa com `SUBINDO`). O `ALAGADO` soa sempre. **O grupo deve avaliar** |
-| **`TRANSBORDANDO` com leitura desatualizada** | Tendência `DESATUALIZADO` também não soa |
+| **Reinício em `TRANSBORDANDO`** | Após um boot a tendência é `INSUFICIENTE` por ~4 min (hardware). Pela regra provisória de 2026-11-19 (§5.2.1), o `TRANSBORDANDO` **soa** nesse período. O custo é alarme possível com o nível estável ou caindo. **O grupo deve confirmar** |
+| **`TRANSBORDANDO` com leitura desatualizada** | Tendência `DESATUALIZADO` **não soa** (a regra provisória cobre só `INSUFICIENTE`) |
 | **`versaoRegra` constante** | Se a regra mudar (v2) com linhas da v1 pendentes na fila, elas saem carimbadas com a v2 |
 | **Migração silenciosa do id** | Linha pendente com `jardim-centro-01` sai como `J01` |
 | **Som parcial** | A saída não tem estado interno: se o som começar no meio de um ciclo, o primeiro pulso pode sair parcial |
@@ -142,7 +160,7 @@ Fuzz da inserção na janela de tendência: 200.000 casos, 0 divergências (exec
 4. **API (Tarefa B):** escolher uma regra explícita para o **boot atual** (por exemplo, o `bootId` da leitura válida mais
    recente por `recebidoEm`) e testar o caso do retardatário. Sem isso, `tendencia.csv` não vale para a API.
 5. **Docs de contrato** (`contrato-telemetria.md`, `dicionario-de-dados.md`) sem os campos novos.
-6. Confirmações do grupo: §5.2 deste relatório (itens 1 e 2), histerese, padrão sonoro e o risco do reinício.
+6. Confirmações do grupo: §5.2 deste relatório (itens 1 e 2), **a regra provisória do som com tendência `INSUFICIENTE` (§5.2.1)**, histerese e padrão sonoro.
 
 ## 8. Achados durante a tarefa
 

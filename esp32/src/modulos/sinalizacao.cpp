@@ -4,7 +4,9 @@
 
 bool somPermitido(EstadoFisico estado, TendenciaLocal tendencia) {
   if (estado == EstadoFisico::ALAGADO) return true;
-  return estado == EstadoFisico::TRANSBORDANDO && tendencia == TendenciaLocal::SUBINDO;
+  // PROVISORIO (2026-11-19, a confirmar pelo grupo): INSUFICIENTE tambem soa.
+  return estado == EstadoFisico::TRANSBORDANDO &&
+         (tendencia == TendenciaLocal::SUBINDO || tendencia == TendenciaLocal::INSUFICIENTE);
 }
 
 // Verdadeiro dentro de um dos pulsos da rajada, no instante do ciclo.

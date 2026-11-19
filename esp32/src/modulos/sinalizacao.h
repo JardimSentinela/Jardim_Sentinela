@@ -34,8 +34,11 @@ constexpr uint32_t SOM_PULSO_MS          = 150;
 constexpr uint32_t SOM_PAUSA_PULSOS_MS   = 150;
 constexpr uint32_t SOM_CICLO_MS          = 2000;
 
-// Politica: o som so e permitido no ALAGADO (sempre) e no TRANSBORDANDO com
-// tendencia SUBINDO. Nos demais estados, e com qualquer outra tendencia, calado.
+// Politica: o som e permitido no ALAGADO (sempre) e no TRANSBORDANDO com tendencia
+// SUBINDO. REGRA PROVISORIA (2026-11-19, a confirmar pelo grupo): o TRANSBORDANDO
+// tambem soa enquanto a tendencia for INSUFICIENTE (ex.: logo apos um reinicio).
+// Nos demais estados, e com qualquer outra tendencia (ESTAVEL, DESCENDO,
+// INDETERMINADO, DESATUALIZADO), calado.
 bool somPermitido(EstadoFisico estado, TendenciaLocal tendencia);
 
 // Saida dos LEDs e do buzzer no instante agoraMs (millis() do dispositivo).
@@ -47,7 +50,8 @@ SaidaSinalizacao calcularSinalizacao(EstadoFisico estado, TendenciaLocal tendenc
 // Versao para os bytes publicados pela tarefa de amostragem (ordinais de
 // EstadoFisico e TendenciaLocal; 0xFF = sem leitura). Estado fora da lista ou
 // 0xFF: tudo apagado e calado (sem leitura nao se sinaliza nada). Tendencia
-// fora da lista conta como INSUFICIENTE: TRANSBORDANDO nao soa; ALAGADO soa.
+// fora da lista conta como INSUFICIENTE: TRANSBORDANDO soa (regra provisoria);
+// ALAGADO soa sempre.
 SaidaSinalizacao calcularSinalizacaoDeBytes(uint8_t estado, uint8_t tendencia, uint32_t agoraMs);
 
 #endif

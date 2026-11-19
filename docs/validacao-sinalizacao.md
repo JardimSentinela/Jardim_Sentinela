@@ -28,7 +28,8 @@
 - **`pot1` a `pot3` (T1592)** só validam o protocolo: seus registros saem **sem** `estado`.
 - **Tempo na simulação:** snapshot a cada **5 s**. A tendência usa **5 snapshots**
   (a janela cobre 20 s) e fica `DESATUALIZADO` quando o último snapshot passa de **15 s**.
-  Depois de um boot, a tendência é `INSUFICIENTE` por cerca de **20 a 25 s**.
+  Depois de um boot, a tendência é `INSUFICIENTE` por cerca de **20 a 25 s**
+  (nesse período o `TRANSBORDANDO` soa: regra provisória, §4).
 - **Serial:** a cada mudança aparece uma linha `TOTEM: estado=… tendencia=… som=permitido|calado`.
   O comando `d` mostra a fila; `i` mostra o diagnóstico.
 - **Padrão sonoro (provisório):** 3 pulsos de 150 ms a cada 2 s. **Piscar do ALAGADO:** 1 s (500 ms aceso, 500 ms apagado).
@@ -56,16 +57,19 @@ variação acima da tolerância de 1,5 cm dentro da janela.
 | 3.14 | Verificar o JSON recebido (receptor ou H2) de um snapshot e de um evento da sonda | Contém `idJardim: "J01"`, `estado`, `tendenciaDispositivo` e `versaoRegra: "v1-provisoria-2026-11"`. O `seq` não volta a zero | PENDENTE | |
 | 3.15 | Verificar o JSON de um evento de `sensor-01` e do boot | **Sem** `estado`, `tendenciaDispositivo` e `versaoRegra` | PENDENTE | |
 
-## 4. Risco a observar: reinício durante a subida
+## 4. Reinício em TRANSBORDANDO (regra provisória de 2026-11-19, a confirmar pelo grupo)
 
 Depois de um boot a tendência é `INSUFICIENTE` até haver 5 snapshots (~4 min no hardware,
-~25 s na simulação). Nesse período o `TRANSBORDANDO` **não soa**, porque só soa com
-`SUBINDO`. O `ALAGADO` soa sempre. Testar: reiniciar durante 3.5 e anotar quanto tempo o
-buzzer demora a voltar.
+~25 s na simulação). Pela regra provisória, nesse período o `TRANSBORDANDO` **soa**, além de
+soar com `SUBINDO`. Com `ESTAVEL`, `DESCENDO`, `INDETERMINADO` ou `DESATUALIZADO` ele cala.
+O `ALAGADO` soa sempre. Ver `docs/relatorio-tarefa-c.md` §5.2.1.
 
-| # | Observação | Resultado |
-|---|---|---|
-| 4.1 | Tempo até o buzzer voltar a soar após reiniciar em TRANSBORDANDO subindo | PENDENTE |
+| # | Ação | Esperado | Resultado |
+|---|---|---|---|
+| 4.1 | Deixar o `pot4` em ~46 % e reiniciar a simulação | Log `tendencia=INSUFICIENTE som=permitido`; vermelho fixo; **buzzer soa** | PENDENTE |
+| 4.2 | Manter 46 % até a janela encher (~25 s) | `tendencia=ESTAVEL`, log `som=calado`; buzzer **cala**. Anotar quanto tempo durou o som | PENDENTE |
+| 4.3 | Reiniciar com o `pot4` em ~40 % (ENCHENDO) | Amarelo; buzzer **calado** mesmo com `INSUFICIENTE` | PENDENTE |
+| 4.4 | Reiniciar com o `pot4` em ~65 % (ALAGADO) | Vermelho piscando; buzzer soa sempre | PENDENTE |
 
 ## 5. Quando preencher
 
