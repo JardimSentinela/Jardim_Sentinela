@@ -19,8 +19,9 @@ import br.edu.cesar.jardimsentinela.config.TendenciaProperties;
 
 /**
  * [SCRUM-28][SW-14] Etapa 6, Bloco D: os parâmetros configuráveis da tendência. Valores
- * iniciais da decisão (D3 e D12): tolerância 1,5 cm e idade máxima de 30 s. São
- * experimentais (calibrados no simulador), não no hardware real. O tamanho da janela
+ * iniciais da decisão (decisões técnicas §5.2): tolerância 1,5 cm e idade máxima de 180 s
+ * (3 vezes o snapshot de 60 s do hardware); a simulação usa 15 s (snapshot de 5 s), pelo
+ * perfil "simulacao". São PROVISÓRIOS. O tamanho da janela
  * (N = 5) é constante do código (D2) e não aparece aqui.
  */
 class TendenciaPropertiesTests {
@@ -35,7 +36,7 @@ class TendenciaPropertiesTests {
         TendenciaProperties padrao = ligar(Map.of());
 
         assertEquals(1.5, padrao.toleranciaCm());
-        assertEquals(Duration.ofSeconds(30), padrao.idadeMaxima());
+        assertEquals(Duration.ofSeconds(180), padrao.idadeMaxima());
         assertEquals(TendenciaProperties.TAMANHO_PAGINA_PADRAO, padrao.tamanhoPagina());
     }
 
@@ -52,9 +53,21 @@ class TendenciaPropertiesTests {
             arquivo.load(entrada);
         }
         assertEquals("1.5", arquivo.getProperty("jardimsentinela.tendencia.tolerancia-cm"));
-        assertEquals("30s", arquivo.getProperty("jardimsentinela.tendencia.idade-maxima"));
+        assertEquals("180s", arquivo.getProperty("jardimsentinela.tendencia.idade-maxima"));
         assertEquals(String.valueOf(TendenciaProperties.TAMANHO_PAGINA_PADRAO),
                 arquivo.getProperty("jardimsentinela.tendencia.tamanho-pagina"));
+    }
+
+    @Test
+    void oPerfilSimulacaoDeclaraIdadeMaximaDe15Segundos() throws Exception {
+        // Simulação: snapshot de 5 s, então 3 x 5 s = 15 s (decisões técnicas §5.2).
+        Path noModulo = Path.of("src/main/resources/application-simulacao.properties");
+        Path naRaiz = Path.of("api-jardim-sentinela", "src/main/resources/application-simulacao.properties");
+        Properties arquivo = new Properties();
+        try (InputStream entrada = Files.newInputStream(Files.exists(noModulo) ? noModulo : naRaiz)) {
+            arquivo.load(entrada);
+        }
+        assertEquals("15s", arquivo.getProperty("jardimsentinela.tendencia.idade-maxima"));
     }
 
     @Test

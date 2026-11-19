@@ -83,7 +83,7 @@ class TendenciaServiceTests {
         }
 
         assertEquals(
-                new TendenciaResponse("J01", Tendencia.SUBINDO, 5, 0, 5, 1.5, "NAO_VALIDADA",
+                new TendenciaResponse("J01", Tendencia.SUBINDO, 5, 0, 5, 1.5, 180, "NAO_VALIDADA",
                         false, false, T0.plusSeconds(5)),
                 calcular());
     }
@@ -250,11 +250,11 @@ class TendenciaServiceTests {
         }
         Instant ultimaRecepcao = T0.plusSeconds(5);
 
-        relogio.definir(ultimaRecepcao.plus(Duration.ofSeconds(30)));
-        assertEquals(Tendencia.SUBINDO, calcular().tendencia(), "30 s exatos ainda é atual");
+        relogio.definir(ultimaRecepcao.plus(Duration.ofSeconds(180)));
+        assertEquals(Tendencia.SUBINDO, calcular().tendencia(), "180 s exatos ainda é atual");
 
         relogio.avancar(Duration.ofNanos(1));
-        assertEquals(Tendencia.DESATUALIZADO, calcular().tendencia(), "acima de 30 s é desatualizado");
+        assertEquals(Tendencia.DESATUALIZADO, calcular().tendencia(), "acima de 180 s é desatualizado");
     }
 
     @Test

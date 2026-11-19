@@ -146,18 +146,19 @@ class TendenciaEndpointTests {
     }
 
     @Test
-    void jsonTemExatamenteOsDezCamposAprovados() throws Exception {
+    void jsonTemExatamenteOsOnzeCampos() throws Exception {
         gravarSerie(10, 11, 12, 13, 14);
 
         tendencia().andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
-                .andExpect(jsonPath("$.length()").value(10))
+                .andExpect(jsonPath("$.length()").value(11))
                 .andExpect(jsonPath("$.jardimId").value("J01"))
                 .andExpect(jsonPath("$.tendencia").value("SUBINDO"))
                 .andExpect(jsonPath("$.leiturasValidas").value(5))
                 .andExpect(jsonPath("$.leiturasDescartadas").value(0))
                 .andExpect(jsonPath("$.janelaLeituras").value(5))
                 .andExpect(jsonPath("$.toleranciaCm").value(1.5))
+                .andExpect(jsonPath("$.idadeMaximaSegundos").value(180))
                 .andExpect(jsonPath("$.confiabilidadeCronologia").value("NAO_VALIDADA"))
                 .andExpect(jsonPath("$.semTimestampDispositivoNaJanela").value(false))
                 .andExpect(jsonPath("$.multiplosSensorId").value(false))
@@ -175,7 +176,7 @@ class TendenciaEndpointTests {
 
         tendencia().andExpect(status().isOk())
                 .andExpect(jsonPath("$.tendencia").value("SUBINDO"))
-                .andExpect(jsonPath("$.length()").value(10))
+                .andExpect(jsonPath("$.length()").value(11))
                 .andExpect(content().string(containsString("\"ultimaRecepcaoEm\":null")));
     }
 
@@ -265,14 +266,14 @@ class TendenciaEndpointTests {
     // ---- idade máxima com relógio controlado ----
 
     @Test
-    void idadeMaximaDe30SegundosUsaORelogioInjetado() throws Exception {
+    void idadeMaximaPadraoDe180SegundosUsaORelogioInjetado() throws Exception {
         for (int i = 0; i < 5; i++) {
             postar("S01", 10.0 + i, t(i));
         }
         Instant ultima = ultimaRecepcaoGravada();
 
-        relogio.definir(ultima.plusSeconds(30));
-        tendencia().andExpect(jsonPath("$.tendencia").value("SUBINDO"));      // 30 s exatos: atual
+        relogio.definir(ultima.plusSeconds(180));
+        tendencia().andExpect(jsonPath("$.tendencia").value("SUBINDO"));      // 180 s exatos: atual
 
         relogio.avancar(Duration.ofNanos(1));
         tendencia().andExpect(status().isOk())
