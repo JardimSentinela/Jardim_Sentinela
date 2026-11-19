@@ -52,7 +52,8 @@ public class TendenciaService {
                 propriedades.toleranciaCm(),
                 propriedades.idadeMaxima(),
                 relogio.instant());
-        return Optional.of(TendenciaResponse.de(jardimId, resultado, propriedades.toleranciaCm()));
+        return Optional.of(TendenciaResponse.de(jardimId, resultado, propriedades.toleranciaCm(),
+                propriedades.idadeMaxima().toSeconds()));
     }
 
     /**

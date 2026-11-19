@@ -21,6 +21,8 @@ import br.edu.cesar.jardimsentinela.tendencia.Tendencia;
  *                                        inválidas no banco.
  * @param janelaLeituras                  tamanho da janela, N.
  * @param toleranciaCm                    tolerância usada (configuração; experimental).
+ * @param idadeMaximaSegundos              idade máxima usada para DESATUALIZADO, em segundos
+ *                                        (configuração; PROVISÓRIO, ver docs/decisoes-tecnicas.md §5.2).
  * @param confiabilidadeCronologia        sempre {@code "NAO_VALIDADA"} neste MVP: a API
  *                                        ainda não persiste bootId, seq e horaSincronizada.
  * @param semTimestampDispositivoNaJanela sinal informativo; não prova confiabilidade.
@@ -38,6 +40,7 @@ public record TendenciaResponse(
         int leiturasDescartadas,
         int janelaLeituras,
         double toleranciaCm,
+        long idadeMaximaSegundos,
         String confiabilidadeCronologia,
         boolean semTimestampDispositivoNaJanela,
         boolean multiplosSensorId,
@@ -47,7 +50,7 @@ public record TendenciaResponse(
     public static final String CRONOLOGIA_NAO_VALIDADA = "NAO_VALIDADA";
 
     public static TendenciaResponse de(String jardimId, ResultadoTendencia resultado,
-            double toleranciaCm) {
+            double toleranciaCm, long idadeMaximaSegundos) {
         return new TendenciaResponse(
                 jardimId,
                 resultado.tendencia(),
@@ -55,6 +58,7 @@ public record TendenciaResponse(
                 resultado.leiturasDescartadas(),
                 CalculadoraTendencia.TAMANHO_JANELA,
                 toleranciaCm,
+                idadeMaximaSegundos,
                 CRONOLOGIA_NAO_VALIDADA,
                 resultado.semTimestampDispositivoNaJanela(),
                 resultado.multiplosSensorId(),
