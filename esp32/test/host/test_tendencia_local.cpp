@@ -224,6 +224,51 @@ static void testarSeqAtravessaDezesseisBits() {
   checar(calcular(u, 1u, 20000u) == TendenciaLocal::SUBINDO, "seq proximo de 2^32 ordena corretamente");
 }
 
+// Historico de tamanho fixo: guarda so as JANELA_TENDENCIA leituras mais recentes.
+static void testarHistorico() {
+  HistoricoTendencia h = {};
+  checar(h.n == 0, "historico novo esta vazio");
+  checar(tendenciaDoHistorico(h, 1u, 0u, IDADE_MAX_SIM_MS) == TendenciaLocal::INSUFICIENTE,
+         "historico vazio: INSUFICIENTE");
+
+  for (uint32_t i = 0; i < 3; i++) {
+    registrarLeituraTendencia(h, LeituraTendencia{1u, i, i * SNAPSHOT_SIM_MS, 10.0f + (float)i * 2});
+  }
+  checar(h.n == 3, "3 registros: n = 3");
+  checar(tendenciaDoHistorico(h, 1u, 10000u, IDADE_MAX_SIM_MS) == TendenciaLocal::INSUFICIENTE,
+         "3 leituras no historico: INSUFICIENTE");
+
+  for (uint32_t i = 3; i < 7; i++) {
+    registrarLeituraTendencia(h, LeituraTendencia{1u, i, i * SNAPSHOT_SIM_MS, 10.0f + (float)i * 2});
+  }
+  checar(h.n == JANELA_TENDENCIA, "depois de 7 registros o historico guarda so 5");
+  checar(h.itens[0].seq == 2 && h.itens[JANELA_TENDENCIA - 1].seq == 6,
+         "os 5 guardados sao os mais recentes (seq 2..6), do mais antigo ao mais novo");
+  checar(tendenciaDoHistorico(h, 1u, 6 * SNAPSHOT_SIM_MS, IDADE_MAX_SIM_MS) == TendenciaLocal::SUBINDO,
+         "historico com niveis 14..22: SUBINDO");
+  checar(tendenciaDoHistorico(h, 1u, 6 * SNAPSHOT_SIM_MS + 16000u, IDADE_MAX_SIM_MS) ==
+             TendenciaLocal::DESATUALIZADO,
+         "historico velho (16 s sem leitura): DESATUALIZADO");
+  checar(tendenciaDoHistorico(h, 2u, 6 * SNAPSHOT_SIM_MS, IDADE_MAX_SIM_MS) == TendenciaLocal::INSUFICIENTE,
+         "outro boot atual: o historico do boot 1 nao conta");
+
+  // Mesmo resultado que o calculo direto sobre as 5 ultimas.
+  std::vector<LeituraTendencia> v(h.itens, h.itens + h.n);
+  checar(calcular(v, 1u, 6 * SNAPSHOT_SIM_MS) ==
+             tendenciaDoHistorico(h, 1u, 6 * SNAPSHOT_SIM_MS, IDADE_MAX_SIM_MS),
+         "historico e calculo direto concordam");
+
+  // seq cruzando 65.535 dentro do historico.
+  HistoricoTendencia g = {};
+  for (uint32_t i = 0; i < 7; i++) {
+    registrarLeituraTendencia(g, LeituraTendencia{1u, 65532u + i, i * SNAPSHOT_SIM_MS, 30.0f - (float)i * 2});
+  }
+  checar(g.itens[0].seq == 65534u && g.itens[4].seq == 65538u,
+         "historico atravessa 65535 -> 65536 sem perder a ordem");
+  checar(tendenciaDoHistorico(g, 1u, 6 * SNAPSHOT_SIM_MS, IDADE_MAX_SIM_MS) == TendenciaLocal::DESCENDO,
+         "historico em queda cruzando 65535: DESCENDO");
+}
+
 static void testarEntradaVazia() {
   checar(calcularTendenciaLocal(nullptr, 0, 1u, 0u, IDADE_MAX_SIM_MS) ==
              TendenciaLocal::INSUFICIENTE,
@@ -239,6 +284,7 @@ int main() {
   testarSeqDoBootAntigoMaior();
   testarTMsEntreBoots();
   testarSeqAtravessaDezesseisBits();
+  testarHistorico();
   testarEntradaVazia();
 
   std::printf("\n%s\n", falhas == 0 ? "TODOS OS CENARIOS OK" : "HOUVE FALHAS");

@@ -76,6 +76,7 @@ GROUPS = {
     ],
     "iso": ["parsearIso", "formatarIso"],
     "anexar": ["anexar"],
+    "linha": ["nomeTipo", "formatarIdSensor", "montarLinha"],
     "gateway": [
         "valorCampo",
         "campoTxt",
@@ -103,6 +104,8 @@ TESTS = [
     ("tendencia_local", "test_tendencia_local.cpp", []),
     ("gateway", "test_gateway.cpp", ["iso", "anexar", "gateway", "rejeicao"]),
     ("sinalizacao", "test_sinalizacao.cpp", []),
+    ("classificador_sonda", "test_classificador_sonda.cpp", []),
+    ("linha", "test_linha.cpp", ["iso", "anexar", "linha", "gateway"]),
 ]
 
 START_RE = re.compile(
@@ -264,6 +267,20 @@ def check_estatico() -> bool:
         ok = False
     else:
         print("OK   sem chamada delay( no firmware")
+
+    # JARDIM_ID em constante unica: o id antigo nao pode reaparecer no codigo.
+    legado = []
+    for arquivo in CHECK_SOURCES + [MODULES_DIR / "config.h"]:
+        for numero, linha in enumerate(
+            arquivo.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            if "jardim-centro-01" in linha.split("//", 1)[0]:
+                legado.append(f"{arquivo.name} linha {numero}")
+    if legado:
+        print("FALHOU id legado jardim-centro-01 no codigo: " + "; ".join(legado))
+        ok = False
+    else:
+        print("OK   id legado jardim-centro-01 nao aparece no codigo (JARDIM_ID unico)")
 
     # Criterio 11: secrets.h ignorado e nao versionado.
     repo = subprocess.run(
