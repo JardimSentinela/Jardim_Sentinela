@@ -130,7 +130,7 @@ class TendenciaEndpointTests {
     @Test
     void desatualizado() throws Exception {
         gravarSerie(10, 11, 12, 13, 14);
-        relogio.definir(T0.plusSeconds(5).plus(Duration.ofSeconds(31)));   // última recepção + 31 s
+        relogio.definir(T0.plusSeconds(5).plus(Duration.ofSeconds(181)));  // última recepção + 181 s (limite: 180 s)
         tendencia().andExpect(status().isOk()).andExpect(jsonPath("$.tendencia").value("DESATUALIZADO"));
     }
 
