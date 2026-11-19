@@ -192,7 +192,57 @@ static void testarTransbordandoSubindo() {
          "TRANSBORDANDO: trocar SUBINDO por ESTAVEL cala o buzzer");
 }
 
+// A tarefa de amostragem publica estado e tendencia como bytes (0xFF = sem
+// leitura). O totem converte os bytes sem aceitar valor invalido.
+static void testarSinalDeBytes() {
+  // Sem leitura da sonda (0xFF) ou estado fora da lista: tudo apagado, calado.
+  bool apagado = true;
+  const uint8_t semEstado[] = {0xFF, 4, 7, 0x80};
+  for (uint8_t e : semEstado) {
+    for (uint32_t ms = 0; ms < 2 * SOM_CICLO_MS; ms += 10) {
+      SaidaSinalizacao s = calcularSinalizacaoDeBytes(e, 0 /* SUBINDO */, ms);
+      apagado = apagado && !s.ledVerde && !s.ledAmarelo && !s.ledVermelho && !s.buzzer;
+    }
+  }
+  checar(apagado, "estado 0xFF ou invalido: nenhum LED aceso e buzzer calado");
+
+  // Bytes validos equivalem a chamar com os enums.
+  bool igual = true;
+  for (EstadoFisico e : ESTADOS) {
+    for (TendenciaLocal t : TENDENCIAS) {
+      for (uint32_t ms = 0; ms < SOM_CICLO_MS; ms += 10) {
+        SaidaSinalizacao a = calcularSinalizacaoDeBytes((uint8_t)e, (uint8_t)t, ms);
+        SaidaSinalizacao b = calcularSinalizacao(e, t, ms);
+        igual = igual && a.ledVerde == b.ledVerde && a.ledAmarelo == b.ledAmarelo &&
+                a.ledVermelho == b.ledVermelho && a.buzzer == b.buzzer;
+      }
+    }
+  }
+  checar(igual, "bytes validos dao a mesma saida que os enums (24 combinacoes)");
+
+  // Tendencia 0xFF ou invalida conta como INSUFICIENTE: TRANSBORDANDO nao soa...
+  bool calado = true, vermelho = true;
+  const uint8_t tendRuim[] = {0xFF, 6, 9};
+  for (uint8_t t : tendRuim) {
+    for (uint32_t ms = 0; ms < 2 * SOM_CICLO_MS; ms += 10) {
+      SaidaSinalizacao s = calcularSinalizacaoDeBytes((uint8_t)EstadoFisico::TRANSBORDANDO, t, ms);
+      calado = calado && !s.buzzer;
+      vermelho = vermelho && s.ledVermelho;
+    }
+  }
+  checar(calado, "TRANSBORDANDO com tendencia invalida (0xFF, 6, 9): buzzer calado");
+  checar(vermelho, "TRANSBORDANDO com tendencia invalida: LED vermelho continua aceso");
+
+  // ...mas ALAGADO soa sempre, mesmo sem tendencia.
+  bool soa = false;
+  for (uint32_t ms = 0; ms < SOM_CICLO_MS; ms++) {
+    soa = soa || calcularSinalizacaoDeBytes((uint8_t)EstadoFisico::ALAGADO, 0xFF, ms).buzzer;
+  }
+  checar(soa, "ALAGADO com tendencia 0xFF: o buzzer soa (ALAGADO soa sempre)");
+}
+
 int main() {
+  testarSinalDeBytes();
   testarConstantes();
   testarPoliticaDoSom();
   testarLeds();
