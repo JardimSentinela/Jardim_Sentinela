@@ -27,7 +27,13 @@ Requisitos: `g++` com C++17 e Python 3.9+. O runner gera os trechos em
 | `test_url.cpp` | Comando `'u'`: alternância da URL inválida e reset do backoff. |
 | `test_backoff.cpp` | Backoff 2/4/8/16/32/60 s, 429 30/60/120/240/300 s, Retry-After, 4xx (5 min), URL vazia, codec inválido e timeout. |
 | `test_sonda.cpp` | Sonda HW-02: janela de 500 ms, média de 10 leituras, conversão ADC → cm, `pronta` separado de `mudou` (variação ≥ 1 cm), taxa assinada e regressão de 10 min parado + 2 cm. Também registra a limitação atual de saturação (calibração nominal). |
-| `run_tests.py` (estático) | Nenhuma chamada `delay(` em `src/main_alt.cpp` nem em `src/modulos/*.cpp`; `secrets.h` ignorado e não versionado; `secrets.example.h` versionado. |
+| `test_estado_fisico.cpp` | Estado físico (faixas 22 / 45 / 60 cm, histerese de 2 cm, entrada inválida), lendo `test/vetores/estado.csv`. |
+| `test_tendencia_local.cpp` | Tendência local (janela de 5 válidas, tolerância 1,5 cm, boot atual, `seq` de 32 bits, histórico), lendo `test/vetores/tendencia.csv`. |
+| `test_gateway.cpp` | Linha NDJSON antiga continua enviada sem os campos novos, round-trip de linhas novas, nome desconhecido, maior linha em `TAMANHO_LINHA`, contador de rejeição por versão. |
+| `test_linha.cpp` | `montarLinha` com `J01` e os campos novos na ordem do gateway; round-trip linha → quadro v2 → JSON. |
+| `test_classificador_sonda.cpp` | Estado da sonda com histerese (`0xFF` sem leitura) e tendência só dos snapshots. |
+| `test_sinalizacao.cpp` | LEDs e buzzer (política do som, piscar, padrão de 3 pulsos), conversão dos bytes publicados. |
+| `run_tests.py` (estático) | O id legado `jardim-centro-01` não aparece no código (`JARDIM_ID` único). Nenhuma chamada `delay(` em `src/main_alt.cpp` nem em `src/modulos/*.cpp`; `secrets.h` ignorado e não versionado; `secrets.example.h` versionado. |
 
 ## Limitações
 
