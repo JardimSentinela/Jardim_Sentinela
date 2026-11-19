@@ -81,10 +81,11 @@ GROUPS = {
         "campoTxt",
         "campoU32",
         "campoDouble",
+        "lerClassificacao",
         "montarQuadroDaLinha",
         "montarJsonGateway",
     ],
-    "rejeicao": [],
+    "rejeicao": ["contarRejeicaoQuadro"],
     "url": ["alternarUrlInvalida"],
     "backoff": ["backoffMs", "backoff429Ms", "agendarNovaTentativa"],
 }

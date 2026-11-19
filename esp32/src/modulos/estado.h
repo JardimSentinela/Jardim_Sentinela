@@ -28,6 +28,7 @@ struct ContadoresEnvio {
   uint32_t falhas;
   uint32_t dizimados;   // snapshots de backfill descartados pela politica (INC 7B)
   uint32_t perdidos;    // nao confirmados removidos pela compactacao (INC 8A)
+  uint32_t rejeitadosVersao;  // quadros rejeitados pela versao do codec (v2)
 };
 
 // Estado do Wi-Fi, avancado por atualizarWifi() no loop (nunca bloqueia).

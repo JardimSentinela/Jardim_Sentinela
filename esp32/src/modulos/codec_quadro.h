@@ -2,21 +2,35 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// Codec do "Quadro no ar v1" (little-endian), compartilhado pelo firmware e
-// pelo gateway local da simulacao. Nao depende de Arduino (testavel no host).
+// Codec do "Quadro no ar v2" (little-endian), compartilhado pelo firmware e
+// pelo gateway local da simulacao. v2 = v1 + 2 bytes por registro (estado fisico
+// e tendencia; 0xFF = sem classificacao). O quadro NAO e persistido: e montado
+// a partir do NDJSON no envio. Versoes diferentes de VERSAO sao rejeitadas. Nao depende de Arduino (testavel no host).
 namespace codec {
 
-constexpr uint8_t  VERSAO          = 0x01;
+constexpr uint8_t  VERSAO          = 0x02;
 constexpr size_t   CABECALHO       = 14;
 constexpr uint8_t  MAX_REGISTROS   = 6;
-constexpr size_t   MAX_BYTES       = 56;   // 6 registros sem gap/absoluto/coords
-constexpr size_t   MAX_COM_EXTRAS  = 134;  // pior caso: 6 x (gap+abs+coords)
+constexpr size_t   MAX_BYTES       = 68;   // 14 + 6 x 9: 6 registros sem gap/absoluto/coords
+constexpr size_t   MAX_COM_EXTRAS  = 146;  // limite folgado: 68 + 6 x (gap+abs+coords); o real e 145
 constexpr uint8_t  SENSOR_JARDIM   = 31;
 constexpr uint16_t DTS_ABSOLUTO    = 0xFFFF;
 constexpr uint8_t  FLAG_SIMULACAO  = 0x01; // bit0: origem simulada
 constexpr uint8_t  FLAG_COORDENADAS = 0x02; // bit1: lat/lon presentes no boot
 
+// Valor "sem classificacao": registro antigo ou sem estado/tendencia. Nunca e
+// preenchido com um valor inventado.
+constexpr uint8_t  SEM_CLASSIFICACAO = 0xFF;
+// Ultimos valores validos no fio: ordinais de EstadoFisico (estado_fisico.h) e
+// de TendenciaLocal (tendencia_local.h). O teste confere a correspondencia.
+constexpr uint8_t  ESTADO_MAX    = 3;
+constexpr uint8_t  TENDENCIA_MAX = 5;
+
 enum Tipo : uint8_t { EVENTO = 0, SNAPSHOT = 1, BOOT = 2 };
+
+// Motivo da rejeicao de um quadro na decodificacao. So VERSAO alimenta o
+// contador de quadros rejeitados por versao.
+enum class MotivoRejeicao : uint8_t { NENHUM = 0, VERSAO = 1, OUTRO = 2 };
 
 // Um registro ja quantizado para o quadro. "ts" e o epoch absoluto; o encoder
 // decide entre dTs curto e u32 absoluto. "coords" so vale para BOOT.
@@ -31,7 +45,13 @@ struct Registro {
   int32_t  lat;        // 1e-7 graus
   int32_t  lon;
   bool     coords;
+  uint8_t  estado    = SEM_CLASSIFICACAO;  // 0..ESTADO_MAX ou SEM_CLASSIFICACAO
+  uint8_t  tendencia = SEM_CLASSIFICACAO;  // 0..TENDENCIA_MAX ou SEM_CLASSIFICACAO
 };
+
+inline bool classificacaoValida(uint8_t valor, uint8_t maximo) {
+  return valor <= maximo || valor == SEM_CLASSIFICACAO;
+}
 
 struct Quadro {
   uint8_t  flags;
@@ -88,7 +108,9 @@ inline size_t tamanho(const Quadro& q) {
     int64_t d = (int64_t)r.ts - (int64_t)q.baseTs;
     if (d < 0 || d > (int64_t)(DTS_ABSOLUTO - 1)) t += 4;
     if ((q.flags & FLAG_COORDENADAS) && r.tipo == BOOT) t += 8;
-    t += 7;
+    if (!classificacaoValida(r.estado, ESTADO_MAX) ||
+        !classificacaoValida(r.tendencia, TENDENCIA_MAX)) return 0;
+    t += 9;
     anterior = r.seq;
   }
   return t;
@@ -127,6 +149,8 @@ inline size_t codificar(const Quadro& q, uint8_t* out, size_t capacidade) {
     out[p++] = r.nivelCm;
     out[p++] = r.bateria;
     put16(out, p, r.deltaT);
+    out[p++] = r.estado;
+    out[p++] = r.tendencia;
 
     if ((q.flags & FLAG_COORDENADAS) && r.tipo == BOOT) {
       put32(out, p, (uint32_t)r.lat);
@@ -137,17 +161,22 @@ inline size_t codificar(const Quadro& q, uint8_t* out, size_t capacidade) {
   return p;   // == total
 }
 
-// Decodifica um quadro completo. Rejeita versao, n, tipo, bateria e tamanho
-// invalidos; exige que o buffer termine exatamente no fim do ultimo registro.
-inline bool decodificar(const uint8_t* in, size_t tam, Quadro* q) {
+// Decodifica um quadro completo. Rejeita versao, n, tipo, bateria, estado,
+// tendencia e tamanho invalidos; exige que o buffer termine exatamente no fim
+// do ultimo registro. "motivo" (opcional) diz por que foi rejeitado.
+inline bool decodificar(const uint8_t* in, size_t tam, Quadro* q,
+                        MotivoRejeicao* motivo = nullptr) {
+  MotivoRejeicao descartado;
+  MotivoRejeicao& m = motivo ? *motivo : descartado;
+  m = MotivoRejeicao::OUTRO;
   if (!in || !q || tam < CABECALHO) return false;
-  if (in[0] != VERSAO) return false;
+  if (in[0] != VERSAO) { m = MotivoRejeicao::VERSAO; return false; }
   q->flags = in[1];
   if (q->flags & ~(FLAG_SIMULACAO | FLAG_COORDENADAS)) return false;
   q->jardimIdx = in[2];
   q->n = in[3];
   if (q->n < 1 || q->n > MAX_REGISTROS) return false;
-  if (tam < CABECALHO + (size_t)q->n * 7) return false;
+  if (tam < CABECALHO + (size_t)q->n * 9) return false;
 
   size_t p = 4;
   q->seqBase = get16(in, p);
@@ -185,11 +214,15 @@ inline bool decodificar(const uint8_t* in, size_t tam, Quadro* q) {
     } else {
       r.ts = q->baseTs + dts;
     }
-    if (!cabe(p, 3, tam)) return false;
+    if (!cabe(p, 6, tam)) return false;   // nivel, bateria, deltaT(2), estado, tendencia
     r.nivelCm = in[p++];
     r.bateria = in[p++];
     if (r.bateria > 100) return false;
     r.deltaT = get16(in, p);
+    r.estado = in[p++];
+    r.tendencia = in[p++];
+    if (!classificacaoValida(r.estado, ESTADO_MAX) ||
+        !classificacaoValida(r.tendencia, TENDENCIA_MAX)) return false;
 
     r.coords = (q->flags & FLAG_COORDENADAS) && r.tipo == BOOT;
     if (r.coords) {
@@ -202,7 +235,9 @@ inline bool decodificar(const uint8_t* in, size_t tam, Quadro* q) {
     }
     anterior = r.seq;
   }
-  return p == tam;
+  if (p != tam) return false;
+  m = MotivoRejeicao::NENHUM;
+  return true;
 }
 
 }  // namespace codec

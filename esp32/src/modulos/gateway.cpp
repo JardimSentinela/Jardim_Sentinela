@@ -3,8 +3,10 @@
 #include "gateway.h"
 #include "config.h"
 #include "estado.h"
+#include "estado_fisico.h"
 #include "linha.h"
 #include "relogio.h"
+#include "tendencia_local.h"
 
 // Aponta para o valor bruto de "chave":... (sem as aspas); nullptr se ausente.
 static const char* valorCampo(const char* linha, const char* chave) {
@@ -48,7 +50,23 @@ static bool campoDouble(const char* linha, const char* chave, double* valor) {
   return true;
 }
 
-// Converte uma linha NDJSON do arquivo no quadro v1 (n=1 por enquanto; o lote
+// Le "chave":"NOME" (estado fisico ou tendencia) e devolve o ordinal do nome.
+// Campo AUSENTE (linha do firmware antigo) deixa SEM_CLASSIFICACAO: nao se inventa
+// valor. Campo PRESENTE com nome desconhecido ou mal formado invalida a linha.
+static bool lerClassificacao(const char* linha, const char* chave, bool estado, uint8_t* saida) {
+  *saida = codec::SEM_CLASSIFICACAO;
+  if (!valorCampo(linha, chave)) return true;
+  char nome[20];
+  if (!campoTxt(linha, chave, nome, sizeof(nome))) return false;
+  const uint8_t maximo = estado ? codec::ESTADO_MAX : codec::TENDENCIA_MAX;
+  for (uint8_t i = 0; i <= maximo; i++) {
+    const char* candidato = estado ? nomeEstado((EstadoFisico)i) : nomeTendencia((TendenciaLocal)i);
+    if (strcmp(nome, candidato) == 0) { *saida = i; return true; }
+  }
+  return false;
+}
+
+// Converte uma linha NDJSON do arquivo no quadro v2 (n=1 por enquanto; o lote
 // de ate 6 entra no INC 7). "horaSinc" e metadado fora da banda do quadro v1.
 bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaSinc) {
   char tipo[12], idSensor[16], bootTexto[9], tsTexto[25], origem[12];
@@ -88,6 +106,10 @@ bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaSinc) {
     campoDouble(linha, CAMPO_LON, &lon);
   }
 
+  uint8_t estado = codec::SEM_CLASSIFICACAO, tendencia = codec::SEM_CLASSIFICACAO;
+  if (!lerClassificacao(linha, CAMPO_ESTADO, true, &estado)) return false;
+  if (!lerClassificacao(linha, CAMPO_TENDENCIA, false, &tendencia)) return false;
+
   q->flags = (uint8_t)((strcmp(origem, TEXTO_SIMULACAO) == 0 ? codec::FLAG_SIMULACAO : 0) |
                        (t == codec::BOOT ? codec::FLAG_COORDENADAS : 0));
   q->jardimIdx = 0;                    // config do gateway: 0 -> JARDIM_ID
@@ -107,6 +129,8 @@ bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaSinc) {
   r.lat = (int32_t)(lat * 10000000.0 + (lat >= 0 ? 0.5 : -0.5));
   r.lon = (int32_t)(lon * 10000000.0 + (lon >= 0 ? 0.5 : -0.5));
   r.coords = (t == codec::BOOT);
+  r.estado = estado;
+  r.tendencia = tendencia;
   return true;
 }
 
@@ -152,6 +176,25 @@ bool montarJsonGateway(const codec::Quadro& q, int idx, bool horaSinc, char* out
   if (r.tipo == codec::BOOT) {
     snprintf(parte, sizeof(parte), ",\"%s\":%.6f,\"%s\":%.6f",
              CAMPO_LAT, r.lat / 10000000.0, CAMPO_LON, r.lon / 10000000.0);
+    anexar(out, tam, usado, parte);
+  }
+  // Campos v2: so saem se o registro tem classificacao. Registro antigo (0xFF)
+  // sai como sempre saiu. versaoRegra e a constante do firmware (nao viaja no quadro).
+  const bool temEstado = r.estado != codec::SEM_CLASSIFICACAO;
+  const bool temTendencia = r.tendencia != codec::SEM_CLASSIFICACAO;
+  if (!codec::classificacaoValida(r.estado, codec::ESTADO_MAX) ||
+      !codec::classificacaoValida(r.tendencia, codec::TENDENCIA_MAX)) return false;
+  if (temEstado) {
+    snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"", CAMPO_ESTADO, nomeEstado((EstadoFisico)r.estado));
+    anexar(out, tam, usado, parte);
+  }
+  if (temTendencia) {
+    snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"", CAMPO_TENDENCIA,
+             nomeTendencia((TendenciaLocal)r.tendencia));
+    anexar(out, tam, usado, parte);
+  }
+  if (temEstado || temTendencia) {
+    snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"", CAMPO_VERSAO_REGRA, VERSAO_REGRA);
     anexar(out, tam, usado, parte);
   }
   snprintf(parte, sizeof(parte), ",\"%s\":%s,\"%s\":\"%s\"}",

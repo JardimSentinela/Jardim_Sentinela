@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 
+#include "codec_quadro.h"
 #include "config.h"
 
 // Lote de ate 6 linhas lidas do arquivo. O envio monta um unico quadro.
@@ -14,6 +15,7 @@ struct LoteLinhas {
 };
 
 void tentarEnviarLote();
+void contarRejeicaoQuadro(codec::MotivoRejeicao motivo, uint8_t versaoRecebida);
 void alternarOffline();
 void alternarUrlInvalida();
 void alternarRespostaForcada();

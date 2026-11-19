@@ -2,7 +2,7 @@
 
 QueueHandle_t filaEventos = nullptr;
 std::atomic<uint32_t> descartados{0};
-ContadoresEnvio g_envio = {0, 0, 0, 0, 0};
+ContadoresEnvio g_envio = {0, 0, 0, 0, 0, 0};
 
 EstadoWifi g_wifi = WIFI_OCIOSO;
 uint32_t    g_wifiMarcMs = 0;
