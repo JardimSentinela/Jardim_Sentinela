@@ -10,16 +10,23 @@ public record JardimResponse(
         Double nivelCm,
         Integer bateria,
         Instant ultimaLeituraEm,
-        long totalLeituras
+        long totalLeituras,
+        /** Estado do registro mais recente, como o dispositivo enviou. Nulo = sem classificação. */
+        String estado,
+        /** Tendência calculada pela API (mesma regra de GET /api/jardins/{id}/tendencia). */
+        String tendencia
 ) {
 
-    public static JardimResponse de(Leitura ultima, long totalLeituras) {
+    /** {@code estado}: último estado válido do jardim (ver LeituraRepository#findComEstadoElegivel). */
+    public static JardimResponse de(Leitura ultima, long totalLeituras, String estado, String tendencia) {
         return new JardimResponse(
                 ultima.getJardimId(),
                 ultima.getSensorId(),
                 ultima.getNivelCm(),
                 ultima.getBateria(),
-                ultima.getRecebidoEm(),
-                totalLeituras);
+                ultima.getTimestampDispositivo() != null ? ultima.getTimestampDispositivo() : ultima.getRecebidoEm(),
+                totalLeituras,
+                estado,
+                tendencia);
     }
 }

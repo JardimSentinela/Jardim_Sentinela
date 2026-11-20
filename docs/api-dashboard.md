@@ -10,14 +10,60 @@ que o código gerado (ou qualquer mock) pode usar hoje, em `develop`.
 
 ## CORS
 
-Liberado para `/api/**`, métodos `GET`/`POST`, qualquer header. Origem
-controlada pela property `jardimsentinela.cors.allowed-origins`
-(`application.properties`), hoje em `*` para não travar o preview do
-dashboard. **Antes de publicar fora do ambiente de desenvolvimento**, trocar
-por uma lista fechada com a URL real do dashboard — "*" não deve ir pra
-produção (ver `config/WebConfig.java`).
+Liberado para `/api/**`, métodos `GET`/`POST`, os headers `Content-Type` e `Accept`, **somente para
+uma lista fechada de origens**: `http://localhost:5173` (dev do Vite) e
+`http://localhost:4173` (preview do build). Origem fora da lista não recebe
+`Access-Control-Allow-Origin` (o navegador bloqueia a leitura; o preflight
+também é recusado). Não há mais `*`.
+
+A lista vem da propriedade `jardimsentinela.cors.allowed-origins`
+(`application.properties`), separada por vírgula. Quando houver deploy do
+dashboard, acrescentar a URL dele nessa propriedade (ver `config/WebConfig.java`
+e `docs/decisoes-tecnicas.md` §6.6).
+
+## Pendências conhecidas (dívida técnica, fora do escopo da SW-11)
+
+- `GET /teste` continua exposto (herdado; usado por `scripts/smoke-test-integracao.sh`
+  e `docs/validacao-wokwi.md`). Remover ou restringir exige ajustar esses dois usos
+  e é decisão da equipe.
+- Log de SQL: `spring.jpa.show-sql` vem **desligado**; para depurar localmente use
+  `SPRING_JPA_SHOW_SQL=true`.
+
+## Ordenação (leitura mais recente)
+
+Histórico e estado atual ordenam pela chave `COALESCE(timestampDispositivo,
+recebidoEm)`, da mais recente para a mais antiga, com desempate por `id`
+decrescente. Assim, leituras retransmitidas pela fila do dispositivo ficam na
+ordem em que o evento aconteceu, não na ordem em que chegaram. Por isso
+`ultimaLeituraEm` é a data (pela mesma chave) da leitura mais recente.
 
 ## Endpoints
+
+### `GET /api/jardins` — lista de jardins com resumo
+
+Um item por jardim que já enviou ao menos uma leitura, ordenado por `jardimId`.
+Jardim sem leitura **não aparece** (sem dados, a resposta é `[]`, status 200).
+Cada item traz a leitura mais recente segundo a chave de ordenação acima.
+A lista é montada com 2 queries fixas (última leitura por jardim + contagem
+agrupada), independentemente do número de jardins (coberto por
+`ListaJardinsQueriesTests`).
+
+```bash
+curl http://localhost:8080/api/jardins
+```
+
+```json
+[
+  { "jardimId": "J01", "nivelCm": 24.0, "estado": "ENCHENDO",
+    "ultimaLeituraEm": "2026-11-19T10:00:00Z", "totalLeituras": 1 },
+  { "jardimId": "J02", "nivelCm": 10.5, "estado": null,
+    "ultimaLeituraEm": "2026-11-19T10:00:05Z", "totalLeituras": 1 }
+]
+```
+
+`estado` é `null` quando o registro não traz classificação (ver abaixo). A lista
+mostra todos os ids que já enviaram dados, inclusive ids legados do firmware; a
+validação de formato (`^J\d{2}$`) ainda não está ligada.
 
 ### `GET /api/jardins/{id}` — estado atual de um jardim
 
@@ -31,12 +77,31 @@ curl http://localhost:8080/api/jardins/J01
 {
   "jardimId": "J01",
   "sensorId": "S01",
-  "nivelCm": 18.5,
-  "bateria": 97,
-  "ultimaLeituraEm": "2026-11-04T14:02:10.123Z",
-  "totalLeituras": 42
+  "nivelCm": 24.0,
+  "bateria": 100,
+  "ultimaLeituraEm": "2026-11-19T10:00:00Z",
+  "totalLeituras": 1,
+  "estado": "ENCHENDO",
+  "tendencia": "INSUFICIENTE"
 }
 ```
+
+- `estado`: vem do **último registro elegível que informou estado**, como o dispositivo
+  enviou (`NORMAL`, `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`). A API **não recalcula**.
+  Se o registro mais recente for um evento de T1592 (sem estado), usa-se o estado
+  anterior, **mas só se recebido dentro da idade máxima da tendência** (180 s por padrão;
+  15 s na simulação): um estado antigo nunca aparece como atual quando a sonda para de
+  informar. O registro de inicialização (`tipo: "boot"`) nunca fornece estado (nível
+  fictício). É `null` se nenhum registro elegível recente trouxe estado. Se o próprio registro
+  mais recente traz estado, ele vale como sempre valeu; a defasagem aparece em
+  `ultimaLeituraEm` e em `tendencia: "DESATUALIZADO"`.
+  `nivelCm`, `ultimaLeituraEm` e `totalLeituras` continuam sendo do registro mais recente,
+  inclusive um `boot`. A lista `GET /api/jardins` usa a mesma regra de estado (último estado
+  válido, dentro da idade máxima, sem `boot`), com 3 queries fixas.
+- `tendencia`: calculada pela API (SW-14), com a **mesma regra** de
+  `GET /api/jardins/{id}/tendencia`: `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`,
+  `INDETERMINADO` ou `DESATUALIZADO`. No exemplo, a única leitura é menos que as 5 da
+  janela. Não é gravada no banco: é calculada a cada consulta. Não é alerta oficial.
 
 Jardim sem nenhuma leitura ainda → **404** com corpo JSON padronizado
 (`erro: "JARDIM_NAO_ENCONTRADO"`, ver "Erros" abaixo). O dashboard precisa
@@ -44,7 +109,7 @@ tratar esse caso (jardim cadastrado mas ainda sem dado é diferente de erro).
 
 ### `GET /api/jardins/{id}/leituras?limite=N` — histórico
 
-Mais recente primeiro. `limite` é opcional (padrão 100, máximo 1000 —
+Mais recente primeiro (chave de ordenação acima). `limite` é opcional (padrão 100, máximo 1000 —
 valores fora da faixa são ajustados, nunca dá erro por causa do `limite`).
 
 ```bash
@@ -53,16 +118,105 @@ curl "http://localhost:8080/api/jardins/J01/leituras?limite=5"
 
 ```json
 [
-  { "id": 42, "jardimId": "J01", "sensorId": "S01", "nivelCm": 18.5, "bateria": 97,
-    "recebidoEm": "2026-11-04T14:02:10.123Z", "timestampDispositivo": "2026-11-04T14:02:09Z" },
-  { "id": 41, "jardimId": "J01", "sensorId": "S01", "nivelCm": 18.1, "bateria": 97,
-    "recebidoEm": "2026-11-04T14:01:40.001Z", "timestampDispositivo": null }
+  { "id": 1, "jardimId": "J01", "sensorId": "S01", "nivelCm": 24.0, "bateria": 100,
+    "recebidoEm": "2026-11-19T05:34:46.338720Z", "timestampDispositivo": "2026-11-19T10:00:00Z",
+    "estado": "ENCHENDO", "tendenciaDispositivo": "SUBINDO", "versaoRegra": "v1-provisoria-2026-11" }
 ]
 ```
 
 `timestampDispositivo` vem `null` quando a origem não manda `timestamp`
-(hoje, o simulador). Jardim sem nenhuma leitura → **404** com o mesmo corpo
+(hoje, o simulador); nesse caso a ordenação usa `recebidoEm`. `estado`, `tendenciaDispositivo` e `versaoRegra` vêm `null` em registros sem classificação. Jardim sem nenhuma leitura → **404** com o mesmo corpo
 `JARDIM_NAO_ENCONTRADO` do endpoint acima; array vazio não é o mesmo caso.
+
+### `GET /api/jardins/{id}/tendencia` — o nível está subindo, estável ou descendo?
+
+[SCRUM-28][SW-14] Endpoint **novo e aditivo**: não altera `GET /api/jardins/{id}` nem
+`GET /api/jardins/{id}/leituras`. Calcula a direção da variação do nível a partir das
+**5 leituras válidas mais recentes**: compara a última com a primeira, dentro de uma
+tolerância. Detalhes e decisões em `docs/tendencia-nivel.md`.
+
+```bash
+curl http://localhost:8080/api/jardins/J01/tendencia
+```
+
+```json
+{
+  "jardimId": "J01",
+  "tendencia": "SUBINDO",
+  "leiturasValidas": 5,
+  "leiturasDescartadas": 0,
+  "janelaLeituras": 5,
+  "toleranciaCm": 1.5,
+  "idadeMaximaSegundos": 180,
+  "confiabilidadeCronologia": "NAO_VALIDADA",
+  "semTimestampDispositivoNaJanela": false,
+  "multiplosSensorId": false,
+  "ultimaRecepcaoEm": "2026-11-19T12:00:05.123Z"
+}
+```
+
+| Campo | Significado |
+|---|---|
+| `jardimId` | Jardim consultado |
+| `tendencia` | Um dos 6 estados (tabela abaixo) |
+| `leiturasValidas` | Leituras usadas na janela (no máximo 5; mostra "3 de 5" no `INSUFICIENTE`) |
+| `leiturasDescartadas` | Leituras inválidas (nível nulo, `NaN`, infinito, negativo, ou sem nenhuma data) **examinadas** ao montar a janela. Não é o total de inválidas no banco |
+| `janelaLeituras` | Tamanho da janela (5) |
+| `toleranciaCm` | Tolerância usada, em cm. Vem da configuração do backend, **não** da requisição |
+| `idadeMaximaSegundos` | Idade máxima usada para `DESATUALIZADO`, em segundos (180 por padrão). Vem da configuração. PROVISÓRIO |
+| `confiabilidadeCronologia` | Sempre `"NAO_VALIDADA"` neste MVP (ver avisos) |
+| `semTimestampDispositivoNaJanela` | `true` se alguma leitura da janela não tem `timestampDispositivo` (vale o `recebidoEm`). Sinal informativo |
+| `multiplosSensorId` | `true` se a janela mistura mais de um `sensorId`. Sinal informativo |
+| `ultimaRecepcaoEm` | Maior `recebidoEm` entre as leituras válidas: quando a **API** recebeu algo pela última vez. Pode ser `null` |
+
+Os 6 valores de `tendencia`:
+
+| Valor | Quando | Sugestão para o dashboard |
+|---|---|---|
+| `SUBINDO` | A variação líquida da janela passou da tolerância, para cima | Nível subindo |
+| `ESTAVEL` | A variação líquida ficou dentro da tolerância (inclusive no limite) | Sem tendência clara. **Não** mostrar como "nível parado" (ver avisos) |
+| `DESCENDO` | A variação líquida passou da tolerância, para baixo | Nível descendo |
+| `INSUFICIENTE` | Menos de 5 leituras válidas | "Poucos dados" (`leiturasValidas` diz quantos) |
+| `INDETERMINADO` | Há leituras com o mesmo horário e as ordens possíveis levariam a classificações diferentes | "Não dá para determinar" |
+| `DESATUALIZADO` | A última recepção é mais antiga que o limite de idade (180 s por padrão; 15 s no perfil `simulacao`) | "Sem dados recentes" |
+
+Quando mais de uma situação vale, a precedência é: `INSUFICIENTE`, depois
+`DESATUALIZADO`, depois `INDETERMINADO`, depois a tendência. **Os 6 estados respondem
+HTTP 200.** Jardim que nunca enviou nenhuma leitura → **404** com o mesmo corpo
+`JARDIM_NAO_ENCONTRADO` dos outros endpoints; jardim com leituras, mesmo que todas
+inválidas, responde 200 (`INSUFICIENTE`).
+
+**Avisos que o dashboard precisa respeitar:**
+
+- **Não é previsão de enchente nem alerta oficial da Defesa Civil.** Só diz a direção da
+  variação observada do nível.
+- `ESTAVEL` significa que a diferença **entre a primeira e a última** leitura ficou
+  dentro da tolerância. O nível pode ter oscilado bastante no meio (`10 → 15 → 10`
+  é `ESTAVEL`).
+- **Valores PROVISÓRIOS** (ver `docs/decisoes-tecnicas.md` §5.2): a janela (5), a tolerância
+  (1,5 cm) e a idade máxima (180 s = 3 vezes o snapshot de 60 s do hardware; 15 s na
+  simulação, com snapshot de 5 s). **Não estão calibrados com dados de campo.**
+- `ultimaRecepcaoEm` mede o silêncio do dispositivo (quando a API **recebeu**), não a idade
+  real da medição: uma retransmissão de leituras antigas tem `ultimaRecepcaoEm` recente.
+  `null` quer dizer "atualidade desconhecida" (nenhuma leitura válida com `recebidoEm`):
+  **nunca** exibir como "dado atual".
+- `confiabilidadeCronologia: "NAO_VALIDADA"`: a ordem das leituras usa o
+  `timestampDispositivo` (ou o `recebidoEm` se faltar), mas a API ainda não persiste
+  `horaSincronizada` nem a ordem entre boots (`bootId` é aleatório), então não consegue
+  validar a cronologia (um
+  reinício do ESP32 pode inverter a ordem real). Os sinais informativos **não** provam
+  confiabilidade.
+- A tendência e `GET /api/jardins/{id}/leituras` usam a mesma ordem (pelo horário da
+  medição, com `recebidoEm` quando faltar). A tendência, porém, ignora registros de
+  inicialização (`boot`), que o histórico lista.
+- Trate valores de `tendencia` desconhecidos de forma segura: novos estados podem surgir.
+
+**Configuração** (sem alterar código; `application.properties`):
+`jardimsentinela.tendencia.tolerancia-cm` (padrão `1.5`),
+`jardimsentinela.tendencia.idade-maxima` (padrão `180s`; o perfil `simulacao`, com
+`spring.profiles.active=simulacao`, usa `15s`) e
+`jardimsentinela.tendencia.tamanho-pagina` (padrão `50`; só muda o número de consultas,
+não o resultado).
 
 ### `GET /api/leituras` — todas as leituras (sem filtro por jardim)
 
@@ -84,6 +238,43 @@ Aceita tanto `{"jardimId","sensorId","nivelCm","bateria"}` (simulador) quanto
 **200** com a leitura já existente se for uma retransmissão (mesmo
 jardim+sensor+timestamp).
 
+Campos **opcionais** novos, enviados pelo dispositivo:
+
+| Campo | Valores aceitos |
+|---|---|
+| `estado` | `NORMAL`, `ENCHENDO`, `TRANSBORDANDO`, `ALAGADO` |
+| `tendenciaDispositivo` | `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`, `INDETERMINADO`, `DESATUALIZADO` |
+| `versaoRegra` | texto, até 64 caracteres (ex.: `v1-provisoria-2026-11`) |
+
+Se vierem, são **guardados como vieram e não são recalculados**. Se não vierem,
+ficam `null`. Valor fora da lista (ou `versaoRegra` acima de 64 caracteres)
+retorna **400** `PAYLOAD_INVALIDO`.
+
+Exemplo de resposta (201) para um envio com os campos novos:
+
+```json
+{
+  "id": 1, "jardimId": "J01", "sensorId": "S01", "nivelCm": 24.0, "bateria": 100,
+  "recebidoEm": "2026-11-19T05:34:46.338719902Z", "timestampDispositivo": "2026-11-19T10:00:00Z",
+  "estado": "ENCHENDO", "tendenciaDispositivo": "SUBINDO", "versaoRegra": "v1-provisoria-2026-11"
+}
+```
+
+Sem os campos novos, a resposta traz `"estado": null`, `"tendenciaDispositivo": null`
+e `"versaoRegra": null`.
+
+Exemplo de erro por `estado` fora da lista (`"estado":"SECO"`):
+
+```json
+{
+  "status": 400,
+  "erro": "PAYLOAD_INVALIDO",
+  "mensagem": "Um ou mais campos não passaram na validação.",
+  "campos": [{ "campo": "estado", "mensagem": "deve ser um de NORMAL, ENCHENDO, TRANSBORDANDO, ALAGADO" }],
+  "momento": "2026-11-19T05:34:46.427200299Z"
+}
+```
+
 Erro de validação (campo ausente/inválido):
 
 ```json
@@ -96,8 +287,8 @@ Erro de validação (campo ausente/inválido):
 }
 ```
 
-Jardim sem nenhuma leitura (`GET /api/jardins/{id}` e
-`GET /api/jardins/{id}/leituras`), **404**:
+Jardim sem nenhuma leitura (`GET /api/jardins/{id}`,
+`GET /api/jardins/{id}/leituras` e `GET /api/jardins/{id}/tendencia`), **404**:
 
 ```json
 {
@@ -112,10 +303,10 @@ Jardim sem nenhuma leitura (`GET /api/jardins/{id}` e
 ## Mocks para o Designer
 
 Se o fluxo do Figma→código precisar de dado antes da API estar de pé numa
-máquina acessível, os três JSONs de resposta acima (`GET /api/jardins/{id}`,
-`GET /api/jardins/{id}/leituras`, erro de validação) são exemplos reais —
-produzidos pelos testes automatizados (`JardimControllerTests`,
-`LeituraIngestaoTests`), não inventados agora. Dá pra colar direto num mock
+máquina acessível, os JSONs de resposta acima (`GET /api/jardins`, `GET /api/jardins/{id}`,
+`GET /api/jardins/{id}/leituras`, erros) são exemplos reais —
+produzidos pelos testes automatizados (`JardimControllerTests`, `JardimOrdenacaoTests`,
+`ListaJardinsTests`, `LeituraCamposEstadoTests`, `LeituraIngestaoTests`), não inventados agora. Dá pra colar direto num mock
 de API (MSW, json-server, etc.) sem esperar o backend local subir.
 
 ## Dependências deste card (ver Jira)

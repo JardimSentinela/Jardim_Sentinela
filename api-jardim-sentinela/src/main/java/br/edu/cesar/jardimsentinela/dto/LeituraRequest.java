@@ -8,7 +8,9 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 
 /**
  * Payload de {@code POST /api/leituras}.
@@ -48,6 +50,39 @@ public record LeituraRequest(
         Integer bateria,
 
         /** Instante do evento no dispositivo (ISO-8601 UTC). Ausente no simulador hoje. */
-        Instant timestamp
+        Instant timestamp,
+
+        /**
+         * [SCRUM-20][SW-11] Estado físico classificado pelo dispositivo (decisões §6.3).
+         * Opcional; guardado como veio, a API não reclassifica.
+         */
+        @Pattern(regexp = "NORMAL|ENCHENDO|TRANSBORDANDO|ALAGADO",
+                message = "deve ser um de NORMAL, ENCHENDO, TRANSBORDANDO, ALAGADO")
+        String estado,
+
+        /** Tendência calculada pelo dispositivo. Opcional; guardada para auditoria, nunca recalculada. */
+        @Pattern(regexp = "SUBINDO|ESTAVEL|DESCENDO|INSUFICIENTE|INDETERMINADO|DESATUALIZADO",
+                message = "deve ser um de SUBINDO, ESTAVEL, DESCENDO, INSUFICIENTE, INDETERMINADO, DESATUALIZADO")
+        String tendenciaDispositivo,
+
+        /** Versão da regra que classificou o registro (ex.: "v1-provisoria-2026-11"). Opcional. */
+        @Size(max = 64)
+        String versaoRegra,
+
+        /**
+         * [SCRUM-28][SW-14] Tipo do registro enviado pelo firmware. Um "boot" não é medição
+         * (nível fictício) e fica fora da tendência. Opcional: ausente no simulador e em
+         * registros antigos, que continuam elegíveis.
+         */
+        @Pattern(regexp = "evento|snapshot|boot", message = "deve ser um de evento, snapshot, boot")
+        String tipo,
+
+        /** [SCRUM-28][SW-14] Identificador do boot (8 hex). Com seq, identifica a leitura. Opcional. */
+        @Pattern(regexp = "[0-9A-Fa-f]{8}", message = "deve ter 8 caracteres hexadecimais")
+        String bootId,
+
+        /** [SCRUM-28][SW-14] Contador do registro no boot (32 bits sem sinal no firmware). Opcional. */
+        @PositiveOrZero @Max(4294967295L)
+        Long seq
 ) {
 }
