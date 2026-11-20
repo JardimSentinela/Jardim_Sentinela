@@ -1,4 +1,5 @@
 import { CalendarDays, Clock3 } from 'lucide-react'
+import IndicadorTendencia from './IndicadorTendencia'
 import { ESTADOS_ALERTA, formatarDataHora } from '../types/jardim'
 import type { InformacoesAlerta, JardimResponse } from '../types/jardim'
 
@@ -79,7 +80,7 @@ export default function StatusCard({
           Jardim {jardim.jardimId}
         </h2>
         <p className="flex max-w-full flex-wrap items-center gap-x-4 gap-y-1 text-xs opacity-80 sm:max-w-[290px] sm:justify-end sm:text-right">
-          <span>Informação Atualizadas em:</span>
+          <span>Informação atualizada em:</span>
           <span className="inline-flex items-center gap-2">
             <CalendarDays className="h-4 w-4" aria-hidden="true" />
             Data {data}
@@ -119,6 +120,10 @@ export default function StatusCard({
           <p className="mt-2 text-base font-semibold opacity-90">
             Estado de alerta — {alerta.subtitulo}
           </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm font-medium">
+            <span className="opacity-80">Tendência:</span>
+            <IndicadorTendencia tendencia={jardim.tendencia} />
+          </div>
           <p className="mt-4 max-w-2xl text-sm leading-relaxed opacity-80">
             {alerta.descricao}
           </p>

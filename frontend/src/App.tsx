@@ -7,12 +7,18 @@ import StatusCard from './components/StatusCard'
 import DadosJardimCard from './components/DadosJardimCard'
 import HistoricoChart from './components/HistoricoChart'
 import PainelCOP from './components/PainelCOP'
+import RedeJardins from './components/RedeJardins'
 import { useJardimData } from './hooks/useJardimData'
+import {
+  JARDINS_MONITORADOS,
+  useJardinsRede,
+  type JardimMonitoradoId,
+} from './hooks/useJardinsRede'
 
-const JARDINS_DISPONIVEIS = ['J01', 'J02', 'J03', 'J04', 'J032'] as const
+const JARDINS_DISPONIVEIS = JARDINS_MONITORADOS
 const CHAVE_TEMA = 'jardim-sentinela-tema'
 
-type JardimId = (typeof JARDINS_DISPONIVEIS)[number]
+type JardimId = JardimMonitoradoId
 
 function lerTemaInicial(): boolean {
   if (typeof window === 'undefined') {
@@ -78,7 +84,7 @@ function StatusConexao({
 function App() {
   const [temaEscuro, setTemaEscuro] = useState<boolean>(lerTemaInicial)
   const [abaAtiva, setAbaAtiva] = useState<AbaPainel>('jardim')
-  const [jardimSelecionado, setJardimSelecionado] = useState<JardimId>('J03')
+  const [jardimSelecionado, setJardimSelecionado] = useState<JardimId>('J01')
   const [busca, setBusca] = useState('')
   const [buscaAberta, setBuscaAberta] = useState(false)
   const areaBuscaRef = useRef<HTMLDivElement>(null)
@@ -90,6 +96,15 @@ function App() {
       limiteHistorico: 30,
     },
   )
+
+  const {
+    itens: itensRede,
+    loading: loadingRede,
+    error: errorRede,
+    refetch: refetchRede,
+  } = useJardinsRede(JARDINS_MONITORADOS, {
+    intervaloPollingMs: 5000,
+  })
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', temaEscuro)
@@ -115,8 +130,8 @@ function App() {
     return JARDINS_DISPONIVEIS.filter((id) => id.toLowerCase().includes(termo))
   }, [busca])
 
-  const verificandoConexao = loading && !jardim
-  const conectado = !error && !verificandoConexao
+  const verificandoConexao = !jardim && (loading || loadingRede)
+  const conectado = !error && !errorRede && !verificandoConexao
 
   function selecionarJardim(id: JardimId) {
     setJardimSelecionado(id)
@@ -268,29 +283,46 @@ function App() {
             </div>
 
             {error && (
-              <p className="mb-4 text-sm text-[#141781] dark:text-[#b9bbff]">
-                Não foi possível atualizar os dados: {error.message}
+              <p
+                role="alert"
+                className="mb-4 rounded-lg border border-[#f0b7a1] bg-[#fff4ef] px-3 py-2 text-sm text-[#9a3412] dark:border-[#7c2d12] dark:bg-[#3b1c12] dark:text-[#fdba74]"
+              >
+                Não foi possível atualizar o jardim {jardimSelecionado}:{' '}
+                {error.message}
               </p>
             )}
+
+            <RedeJardins
+              itens={itensRede}
+              loading={loadingRede}
+              error={errorRede}
+              jardimSelecionado={jardimSelecionado}
+              onSelecionar={selecionarJardim}
+              onTentarNovamente={() => {
+                void refetchRede()
+                void refetch()
+              }}
+              className="mb-6"
+            />
 
             <div className="grid gap-6 lg:grid-cols-12">
               <div className="lg:col-span-5">
                 <StatusCard
                   jardim={jardim}
                   alerta={alerta}
-                  loading={verificandoConexao}
+                  loading={loading && !jardim}
                   onTentarNovamente={() => void refetch()}
                 />
               </div>
               <div className="lg:col-span-7">
-                <DadosJardimCard jardim={jardim} loading={verificandoConexao} />
+                <DadosJardimCard jardim={jardim} loading={loading && !jardim} />
               </div>
             </div>
 
             <div className="mt-6">
               <HistoricoChart
                 jardimId={jardimSelecionado}
-                loading={verificandoConexao}
+                loading={loading && !jardim}
                 corDestaque={corDestaqueDoGrafico(alerta?.cor, temaEscuro)}
               />
             </div>
