@@ -17,7 +17,16 @@ constexpr uint8_t PINO_BUZZER       = 23;
 // PROVISORIO: frequencia do tom do buzzer. O padrao (pulsos) esta em sinalizacao.h.
 constexpr uint32_t FREQUENCIA_BUZZER_HZ = 2000;
 
+// Periodo da tarefa do totem. Bem menor que o pulso do buzzer (150 ms) para o
+// padrao sonoro e o pisca do LED nao distorcerem.
+constexpr uint32_t PERIODO_TOTEM_MS = 20;
+
 void iniciarTotem();
-void atualizarTotem();   // chamar a cada volta do loop(), sem bloquear
+// Cria a tarefa FreeRTOS que chama atualizarTotem() a cada PERIODO_TOTEM_MS. A
+// sinalizacao NAO pode depender do loop(): ele bloqueia em http.POST() (ate
+// HTTP_TIMEOUT_MS) e, com o buzzer dentro de um pulso, o som ficaria continuo.
+void iniciarTarefaTotem();
+// Uso interno da tarefa (e dos testes de bancada). Nao chamar do loop().
+void atualizarTotem();
 
 #endif

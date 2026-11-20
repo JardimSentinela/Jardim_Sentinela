@@ -268,6 +268,20 @@ def check_estatico() -> bool:
     else:
         print("OK   sem chamada delay( no firmware")
 
+    # O loop() bloqueia em http.POST(): o totem tem de rodar em tarefa propria.
+    # Falha se loop() voltar a chamar atualizarTotem() ou se a tarefa nao for criada.
+    principal = (ESP32 / "src" / "main_alt.cpp").read_text(encoding="utf-8")
+    codigo_principal = "\n".join(l.split("//", 1)[0] for l in principal.splitlines())
+    corpo_loop = codigo_principal.split("void loop()", 1)[-1]
+    if re.search(r"\batualizarTotem\s*\(", corpo_loop):
+        print("FALHOU loop() chama atualizarTotem(): a sinalizacao congela durante o POST")
+        ok = False
+    elif not re.search(r"\biniciarTarefaTotem\s*\(", codigo_principal):
+        print("FALHOU main_alt.cpp nao cria a tarefa do totem (iniciarTarefaTotem)")
+        ok = False
+    else:
+        print("OK   totem em tarefa propria (loop() nao o atualiza)")
+
     # JARDIM_ID em constante unica: o id antigo nao pode reaparecer no codigo.
     legado = []
     for arquivo in CHECK_SOURCES + [MODULES_DIR / "config.h"]:

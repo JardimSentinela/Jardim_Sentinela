@@ -34,6 +34,20 @@ void iniciarTotem() {
   tocarBuzzer(false);
 }
 
+static void tarefaTotem(void*) {
+  TickType_t ultimo = xTaskGetTickCount();
+  for (;;) {
+    atualizarTotem();
+    vTaskDelayUntil(&ultimo, pdMS_TO_TICKS(PERIODO_TOTEM_MS));
+  }
+}
+
+void iniciarTarefaTotem() {
+  // Prioridade 2: acima do loop() (1), abaixo da amostragem (3). Mesmo nucleo do
+  // loop(), mas o loop bloqueado em rede nao ocupa CPU, entao a tarefa roda.
+  xTaskCreatePinnedToCore(tarefaTotem, "totem", 4096, nullptr, 2, nullptr, 1);
+}
+
 void atualizarTotem() {
   const uint8_t estado = g_estadoTotem.load();
   const uint8_t tendencia = g_tendenciaTotem.load();
