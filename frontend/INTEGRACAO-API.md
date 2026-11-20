@@ -1,15 +1,17 @@
 # Integração do dashboard com a API
 
 Este documento registra o que o frontend consome hoje, como os campos da API
-são mapeados e **o que ainda falta no backend** para o critério de aceite
+são mapeados e qual contrato o backend precisa expor para o critério de aceite
 funcionar de ponta a ponta com dados reais.
 
-## Dependência de backend (pendência)
+## Dependência de backend
 
-O contrato completo usado por esta integração existe na branch
-`feat/SCRUM-28-tendencia-api`, que **ainda não foi integrada a `develop`**.
+O contrato completo usado por esta integração veio da branch
+`feat/SCRUM-28-tendencia-api` e **já foi mergeado nesta branch**
+(`SCRUM-35-sw-17-conectar-dashboard-gerado-a-api`). Portanto, rodando esta
+branch com a API Spring Boot, a interface recebe `estado` e `tendencia` reais.
 
-Em `develop`, hoje:
+Em `develop`, o contrato ainda não está presente:
 
 | Recurso | Situação em `develop` |
 |---|---|
@@ -18,15 +20,12 @@ Em `develop`, hoje:
 | `GET /api/jardins/{id}` com `tendencia` | **não existe** |
 | `GET /api/jardins/{id}/tendencia` | **não existe** |
 
-Consequência: o frontend já está pronto para o contrato documentado, mas, rodando
-contra `develop`, a **tendência aparecerá como "Indisponível"** e o `estado`
-será derivado do nível (sem classificação vinda do dispositivo). Para o
-critério de aceite — J01–J04 com nível, estado, tendência e última atualização
-**da API** — é necessário integrar a branch `feat/SCRUM-28-tendencia-api` (ou
-equivalente) em `develop`.
+Consequência: rodando contra `develop`, a **tendência apareceria como
+"Indisponível"** e o `estado` seria derivado do nível (sem classificação vinda
+do dispositivo). Ao promover esta branch para `develop`, o contrato vai junto.
 
-Este trabalho **não cria nem altera o backend**; a pendência acima é de
-integração da API.
+O frontend não cria nem altera o backend; o merge da API de tendência foi feito
+nesta branch justamente para fechar a dependência.
 
 ## Endpoints consumidos
 
