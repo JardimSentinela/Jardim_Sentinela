@@ -75,9 +75,18 @@ curl http://localhost:8080/api/jardins/J01
 }
 ```
 
-- `estado`: vem do registro mais recente, como o dispositivo enviou (`NORMAL`,
-  `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`). A API **não recalcula**. É `null`
-  em registros antigos, sem classificação.
+- `estado`: vem do **último registro elegível que informou estado**, como o dispositivo
+  enviou (`NORMAL`, `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`). A API **não recalcula**.
+  Se o registro mais recente for um evento de T1592 (sem estado), usa-se o estado
+  anterior, **mas só se recebido dentro da idade máxima da tendência** (180 s por padrão;
+  15 s na simulação): um estado antigo nunca aparece como atual quando a sonda para de
+  informar. O registro de inicialização (`tipo: "boot"`) nunca fornece estado (nível
+  fictício). É `null` se nenhum registro elegível recente trouxe estado. Se o próprio registro
+  mais recente traz estado, ele vale como sempre valeu; a defasagem aparece em
+  `ultimaLeituraEm` e em `tendencia: "DESATUALIZADO"`.
+  `nivelCm`, `ultimaLeituraEm` e `totalLeituras` continuam sendo do registro mais recente,
+  inclusive um `boot`. A lista `GET /api/jardins` ainda mostra o estado do registro mais
+  recente (pendência registrada na lista de decisões da equipe).
 - `tendencia`: calculada pela API (SW-14), com a **mesma regra** de
   `GET /api/jardins/{id}/tendencia`: `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`,
   `INDETERMINADO` ou `DESATUALIZADO`. No exemplo, a única leitura é menos que as 5 da
@@ -182,11 +191,13 @@ inválidas, responde 200 (`INSUFICIENTE`).
   **nunca** exibir como "dado atual".
 - `confiabilidadeCronologia: "NAO_VALIDADA"`: a ordem das leituras usa o
   `timestampDispositivo` (ou o `recebidoEm` se faltar), mas a API ainda não persiste
-  `bootId`, `seq` e `horaSincronizada`, então não consegue validar a cronologia (um
+  `horaSincronizada` nem a ordem entre boots (`bootId` é aleatório), então não consegue
+  validar a cronologia (um
   reinício do ESP32 pode inverter a ordem real). Os sinais informativos **não** provam
   confiabilidade.
-- A ordem da tendência (pelo horário da medição) **pode divergir** da de
-  `GET /api/jardins/{id}/leituras` (por `recebidoEm`) até as duas serem unificadas.
+- A tendência e `GET /api/jardins/{id}/leituras` usam a mesma ordem (pelo horário da
+  medição, com `recebidoEm` quando faltar). A tendência, porém, ignora registros de
+  inicialização (`boot`), que o histórico lista.
 - Trate valores de `tendencia` desconhecidos de forma segura: novos estados podem surgir.
 
 **Configuração** (sem alterar código; `application.properties`):

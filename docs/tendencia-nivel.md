@@ -52,7 +52,7 @@ consecutivas e retorna resultado consistente.
 | D11 | Histórico insuficiente | Menos de 5 leituras válidas → `INSUFICIENTE` (HTTP 200); 404 só sem nenhuma leitura |
 | D12 | Idade | Limite PROVISÓRIO de **180 s** (3 vezes o snapshot de 60 s; 15 s na simulação), configurável, sobre `recebidoEm`; exatamente o limite ainda é atual |
 | D13 | Endpoint | `GET /api/jardins/{id}/tendencia`, DTO próprio (planejado) |
-| D14 | Fonte dos dados (P3) | Consulta nova só para a SW-14; SW-06 e SW-07 inalteradas; divergência documentada |
+| D14 | Fonte dos dados (P3) | Consulta nova só para a SW-14 (exclui `boot`); a ordenação de SW-06 e SW-07 foi alinhada pela SW-11 |
 | D15 | Testes | Séries construídas à mão; simulador só para observação e regressão; **TDD (RED → GREEN → REFACTOR) obrigatório** |
 
 **Todos os parâmetros numéricos (N, tolerância, idade) são experimentais, definidos a
@@ -422,13 +422,14 @@ são as inválidas **examinadas**, e o serviço para a busca num ponto determin�
 `COALESCE(timestampDispositivo, recebidoEm) DESC`, com a regra da chave cronológica
 **em um único lugar**. SW-06 e SW-07 **não mudam** neste trabalho.
 
-**Divergência temporária (documentada):** hoje o histórico e o estado atual (SW-06,
-SW-07) ordenam por `recebidoEm DESC, id DESC`; a seção 3.4 do contrato decidiu migrar
-para `timestampDispositivo` e marcou a implementação como pendente. Enquanto a
-unificação não ocorre, o **histórico** e a **tendência** podem divergir na ordenação
-visível ao dashboard. É preciso registrar o ticket de acompanhamento "alinhar SW-06 e
-SW-07 ao contrato 3.4", com testes de regressão de ordenação (por exemplo
-`TelemetriaIntercambiavelTests`, que verifica a ordem do histórico).
+**Ordenação unificada (atualizado em 2026-11-20):** a SW-11 migrou o histórico e o estado
+atual (SW-06, SW-07) para `COALESCE(timestampDispositivo, recebidoEm) DESC, id DESC`
+(contrato, seção 3.4, opção B). Agora o histórico, o estado atual e a tendência usam a
+**mesma chave cronológica**; não há mais divergência de ordenação. Sobram duas consultas
+parecidas: `findHistorico` (histórico, inclui `boot`) e `findHistoricoPorChaveCronologica`
+(tendência, exclui `boot` e outros registros inelegíveis). A diferença é a elegibilidade,
+por isso não foram fundidas; a regra da chave existe em um lugar por camada (JPQL em
+`LeituraRepository.CHAVE_CRONOLOGICA` e Java em `CalculadoraTendencia.chaveCronologica`).
 
 ### Cuidados obrigatórios (fixados antes de implementar a consulta)
 
@@ -719,25 +720,28 @@ representam as decisões de domínio deste documento.
    resolução entre sensores.
 2. **`ESTAVEL` não significa nível constante.** Oscilação grande com variação líquida
    dentro da tolerância é `ESTAVEL`.
-3. **Cronologia não validada.** A API ainda descarta `bootId`, `seq` e
-   `horaSincronizada`. Horário estimado do firmware e reinício do ESP32 podem inverter a
+3. **Cronologia não validada.** A API guarda `bootId` e `seq` (só para identificar a
+   leitura e a idempotência) mas ainda descarta `horaSincronizada`, e não usa `seq` para
+   ordenar nem para detectar perda. Horário estimado do firmware e reinício do ESP32 podem inverter a
    ordem real sem aviso.
 4. **A idade mede a última recepção**, não a idade real da medição.
 5. **Janela por quantidade de leituras:** o tempo coberto varia por jardim (no
    simulador, de 8 a 20 s) e, no hardware real, pode cobrir horas.
-6. **Idempotência (SCRUM-44):** a chave `jardimId + sensorId + timestampDispositivo`,
-   com resolução de 1 segundo, **pode descartar eventos legítimos** do mesmo sensor no
+6. **Idempotência (SCRUM-44):** [corrigido para o firmware em 2026-11-20] quando a origem
+   envia `bootId` e `seq`, a leitura é identificada por `jardimId + bootId + seq`. A chave
+   `jardimId + sensorId + timestampDispositivo` (resolução de 1 segundo) só vale agora para
+   origens sem esses campos (simulador, registros antigos) e **pode descartar eventos legítimos** do mesmo sensor no
    mesmo segundo (a API devolve 200 com o registro existente). Se o evento descartado
    fosse uma ponta da janela, a tendência seria calculada com dados incompletos, sem
-   detecção. A ingestão **não será alterada** neste trabalho.
+   detecção. (Texto original: "a ingestão não será alterada neste trabalho"; alterada depois, a pedido dos reviews do PR #23.)
 7. **Possível duplicata em corrida:** [Provável] a checagem da SW-10 consulta e depois
    grava, sem restrição de unicidade na entidade; requisições simultâneas idênticas
    podem gerar duplicatas. Elas têm o mesmo horário e o mesmo nível, então o tratamento
    de empates as tolera.
 8. **Série única por jardim:** pode misturar fontes de resolução diferente (degraus de
    5 cm e sonda contínua); a comparabilidade no hardware está por validar.
-9. **Divergência temporária de ordenação** entre a tendência (`timestampDispositivo`) e
-   o histórico/estado atual (`recebidoEm`), até a unificação (seção 12).
+9. ~~Divergência temporária de ordenação~~ **Resolvida** pela SW-11 (seção 12): histórico,
+   estado atual e tendência ordenam pela mesma chave cronológica.
 10. **Saturação do simulador** em 0 e 50 cm e saturação em 15 cm dos degraus (seção 9).
 11. A medida de tendência **não** é previsão de enchente.
 12. **Atualidade desconhecida sem `recebidoEm`:** com leituras válidas sem nenhum
@@ -760,7 +764,7 @@ representam as decisões de domínio deste documento.
   cronologia **validada**. Mexe em entidade, DTO, contrato e banco e depende de decisão
   do time (contrato, seção 3.3). Observação: `bootId` é aleatório e **não** indica
   qual boot veio antes.
-- **Unificar a ordenação** de SW-06 e SW-07 com a SW-14 (contrato, seção 3.4).
+- ~~Unificar a ordenação de SW-06 e SW-07 com a SW-14~~ (feito na SW-11).
 - **Limitar ou indexar a busca** se o volume crescer: índice em `(jardimId, chave
   cronológica)` ou limite por tempo (a decisão de produto sobre o que fazer ao atingir o
   limite é de domínio).
@@ -790,9 +794,8 @@ representam as decisões de domínio deste documento.
 7. ~~Comportamento sem nenhum `recebidoEm` nas leituras válidas~~ **Fechado em
    2026-11-19** (seção 10): `ultimaRecepcaoEm = null`, sem `DESATUALIZADO` e sem afirmar
    que o dado está atual. O DTO mantém o `null` visível (um teste confere).
-8. Ticket de acompanhamento "alinhar SW-06 e SW-07 ao contrato 3.4 (ordenação)": **ainda
-   não registrado** (o ambiente de desenvolvimento não alcança o Jira). A divergência
-   temporária está documentada na seção 12 e em `docs/api-dashboard.md`.
+8. ~~Ticket "alinhar SW-06 e SW-07 ao contrato 3.4 (ordenação)"~~ **Dispensado:** a SW-11
+   fez o alinhamento (seção 12).
 
 ## 17. Referências
 
@@ -804,3 +807,17 @@ representam as decisões de domínio deste documento.
 - Código: `JardimController.buscarHistorico`, `JardimService.buscarHistorico`,
   `LeituraRepository`, `Leitura`, `LeituraRequest`, `GeradorDadosJardim`,
   `esp32/src/modulos/drenagem.cpp`, `gateway.cpp`, `relogio.cpp`, `amostragem.cpp`.
+
+## Elegibilidade dos registros (correção dos reviews do PR #23, 2026-11-20)
+
+- **Registro `boot` não entra na tendência.** O boot traz nível fictício (0,0 cm) e não é
+  medição: com um boot de 0 cm e quatro snapshots de 46 cm a API devolvia `SUBINDO`, e o
+  firmware `INSUFICIENTE`. A exclusão está na consulta (`LeituraRepository.ELEGIVEL`), não
+  na calculadora, que continua pura e inalterada.
+- **Registros sem `tipo`** (simulador e linhas antigas) continuam elegíveis. Um boot gravado
+  **antes** desta correção não tem `tipo` e não é reconhecível: continua contando. Só novos
+  envios do firmware trazem `tipo`.
+- **Estado em `GET /api/jardins/{id}`:** último estado informado por um registro elegível
+  recebido dentro da idade máxima (ver `docs/api-dashboard.md`). A tendência e o estado agora excluem os mesmos registros.
+- Eventos de T1592 continuam elegíveis para a tendência (nível do conjunto de degraus); o
+  firmware usa só snapshots. Diferença em aberto, ver lista de decisões da equipe.
