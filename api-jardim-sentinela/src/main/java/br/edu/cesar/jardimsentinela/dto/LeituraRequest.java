@@ -8,7 +8,9 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 
 /**
  * Payload de {@code POST /api/leituras}.
@@ -48,6 +50,23 @@ public record LeituraRequest(
         Integer bateria,
 
         /** Instante do evento no dispositivo (ISO-8601 UTC). Ausente no simulador hoje. */
-        Instant timestamp
+        Instant timestamp,
+
+        /**
+         * [SCRUM-20][SW-11] Estado físico classificado pelo dispositivo (decisões §6.3).
+         * Opcional; guardado como veio, a API não reclassifica.
+         */
+        @Pattern(regexp = "NORMAL|ENCHENDO|TRANSBORDANDO|ALAGADO",
+                message = "deve ser um de NORMAL, ENCHENDO, TRANSBORDANDO, ALAGADO")
+        String estado,
+
+        /** Tendência calculada pelo dispositivo. Opcional; guardada para auditoria, nunca recalculada. */
+        @Pattern(regexp = "SUBINDO|ESTAVEL|DESCENDO|INSUFICIENTE|INDETERMINADO|DESATUALIZADO",
+                message = "deve ser um de SUBINDO, ESTAVEL, DESCENDO, INSUFICIENTE, INDETERMINADO, DESATUALIZADO")
+        String tendenciaDispositivo,
+
+        /** Versão da regra que classificou o registro (ex.: "v1-provisoria-2026-11"). Opcional. */
+        @Size(max = 64)
+        String versaoRegra
 ) {
 }

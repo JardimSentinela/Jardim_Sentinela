@@ -7,6 +7,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import br.edu.cesar.jardimsentinela.dto.JardimResponse;
+import br.edu.cesar.jardimsentinela.dto.JardimResumoResponse;
 import br.edu.cesar.jardimsentinela.entity.Leitura;
 import br.edu.cesar.jardimsentinela.repository.LeituraRepository;
 
@@ -17,15 +18,31 @@ public class JardimService {
     public static final int LIMITE_MAXIMO = 1000;
 
     private final LeituraRepository leituraRepository;
+    private final TendenciaService tendenciaService;
 
-    public JardimService(LeituraRepository leituraRepository) {
+    public JardimService(LeituraRepository leituraRepository, TendenciaService tendenciaService) {
         this.leituraRepository = leituraRepository;
+        this.tendenciaService = tendenciaService;
     }
 
-    /** Estado atual do jardim = sua leitura mais recente. Vazio se o jardim nunca enviou dados. */
+    /**
+     * Estado atual do jardim = sua leitura mais recente. A tendência vem do TendenciaService
+     * (a mesma regra de GET /api/jardins/{id}/tendencia); o estado continua vindo do registro.
+     * Vazio se o jardim nunca enviou dados.
+     */
     public Optional<JardimResponse> buscarJardim(String jardimId) {
-        return leituraRepository.findFirstByJardimIdOrderByRecebidoEmDescIdDesc(jardimId)
-                .map(ultima -> JardimResponse.de(ultima, leituraRepository.countByJardimId(jardimId)));
+        return leituraRepository.findHistorico(jardimId, PageRequest.of(0, 1)).stream().findFirst()
+                .map(ultima -> JardimResponse.de(ultima, leituraRepository.countByJardimId(jardimId),
+                        tendenciaService.calcularTendencia(jardimId)
+                                .map(t -> t.tendencia().name()).orElse(null)));
+    }
+
+    /** Resumo de cada jardim que já enviou dados, ordenado por jardimId. Jardim sem leitura não aparece. */
+    public List<JardimResumoResponse> listarJardins() {
+        return leituraRepository.findJardimIdsComLeitura().stream()
+                .flatMap(id -> leituraRepository.findHistorico(id, PageRequest.of(0, 1)).stream()
+                        .map(ultima -> JardimResumoResponse.de(ultima, leituraRepository.countByJardimId(id))))
+                .toList();
     }
 
     /** Histórico do mais recente para o mais antigo. Vazio se o jardim nunca enviou dados. */
@@ -34,7 +51,7 @@ public class JardimService {
             return Optional.empty();
         }
         int limiteEfetivo = Math.min(Math.max(limite, 1), LIMITE_MAXIMO);
-        return Optional.of(leituraRepository.findByJardimIdOrderByRecebidoEmDescIdDesc(
+        return Optional.of(leituraRepository.findHistorico(
                 jardimId, PageRequest.of(0, limiteEfetivo)));
     }
 }
