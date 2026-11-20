@@ -10,7 +10,7 @@ que o código gerado (ou qualquer mock) pode usar hoje, em `develop`.
 
 ## CORS
 
-Liberado para `/api/**`, métodos `GET`/`POST`, qualquer header, **somente para
+Liberado para `/api/**`, métodos `GET`/`POST`, os headers `Content-Type` e `Accept`, **somente para
 uma lista fechada de origens**: `http://localhost:5173` (dev do Vite) e
 `http://localhost:4173` (preview do build). Origem fora da lista não recebe
 `Access-Control-Allow-Origin` (o navegador bloqueia a leitura; o preflight
@@ -20,6 +20,14 @@ A lista vem da propriedade `jardimsentinela.cors.allowed-origins`
 (`application.properties`), separada por vírgula. Quando houver deploy do
 dashboard, acrescentar a URL dele nessa propriedade (ver `config/WebConfig.java`
 e `docs/decisoes-tecnicas.md` §6.6).
+
+## Pendências conhecidas (dívida técnica, fora do escopo da SW-11)
+
+- `GET /teste` continua exposto (herdado; usado por `scripts/smoke-test-integracao.sh`
+  e `docs/validacao-wokwi.md`). Remover ou restringir exige ajustar esses dois usos
+  e é decisão da equipe.
+- Log de SQL: `spring.jpa.show-sql` vem **desligado**; para depurar localmente use
+  `SPRING_JPA_SHOW_SQL=true`.
 
 ## Ordenação (leitura mais recente)
 
@@ -36,6 +44,9 @@ ordem em que o evento aconteceu, não na ordem em que chegaram. Por isso
 Um item por jardim que já enviou ao menos uma leitura, ordenado por `jardimId`.
 Jardim sem leitura **não aparece** (sem dados, a resposta é `[]`, status 200).
 Cada item traz a leitura mais recente segundo a chave de ordenação acima.
+A lista é montada com 2 queries fixas (última leitura por jardim + contagem
+agrupada), independentemente do número de jardins (coberto por
+`ListaJardinsQueriesTests`).
 
 ```bash
 curl http://localhost:8080/api/jardins
