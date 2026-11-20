@@ -61,6 +61,8 @@ static void testarVetores() {
   std::string linha;
   int casos = 0;
   while (std::getline(arq, linha)) {
+    // Windows com core.autocrlf grava os CSV com CRLF: descarta o \r do fim da linha.
+    if (!linha.empty() && linha.back() == '\r') linha.pop_back();
     if (linha.empty() || linha[0] == '#' || linha.rfind("anterior,", 0) == 0) continue;
     size_t v1 = linha.find(',');
     size_t v2 = linha.find(',', v1 + 1);
