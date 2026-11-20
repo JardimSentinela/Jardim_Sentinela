@@ -8,6 +8,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 /**
  * [SCRUM-20][SW-11] CORS para o dashboard consumir a API a partir de outra origem.
  *
+ * Headers: só Content-Type e Accept (sem "*"); quando houver autenticação, acrescentar Authorization.
+ *
  * Lista fechada de origens (docs/decisoes-tecnicas.md §6.6): servidor de dev (5173) e
  * preview do build (4173) do Vite. Nada de "*": com ele, qualquer página aberta no
  * navegador de quem roda a API poderia enviar dados a ela, inclusive por POST.
@@ -25,6 +27,6 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addMapping("/api/**")
                 .allowedOrigins(origensPermitidas)
                 .allowedMethods("GET", "POST")
-                .allowedHeaders("*");
+                .allowedHeaders("Content-Type", "Accept");
     }
 }
