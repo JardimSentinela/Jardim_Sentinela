@@ -44,6 +44,7 @@ void imprimirDiagnostico() {
   Serial.printf("proximoEnvioEm: %ld s\n", restante > 0 ? (long)(restante / 1000) : 0L);
   Serial.printf("descartados: %lu\n", (unsigned long)descartados.load());
   Serial.printf("perdidosNaoConfirmados: %lu\n", (unsigned long)g_envio.perdidos);
+  Serial.printf("rejeitadosVersao: %lu\n", (unsigned long)g_envio.rejeitadosVersao);
   uint8_t amostras = latenciaAmostras();
   uint32_t desconhecidas = latenciaDesconhecidas();
   uint32_t foraBoot = latenciaForaBoot();

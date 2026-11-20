@@ -1,10 +1,14 @@
 // ===== GATEWAY LOCAL (INC 6B) =================================================
 
 #include "gateway.h"
+
+#include <cmath>
 #include "config.h"
 #include "estado.h"
+#include "estado_fisico.h"
 #include "linha.h"
 #include "relogio.h"
+#include "tendencia_local.h"
 
 // Aponta para o valor bruto de "chave":... (sem as aspas); nullptr se ausente.
 static const char* valorCampo(const char* linha, const char* chave) {
@@ -48,7 +52,23 @@ static bool campoDouble(const char* linha, const char* chave, double* valor) {
   return true;
 }
 
-// Converte uma linha NDJSON do arquivo no quadro v1 (n=1 por enquanto; o lote
+// Le "chave":"NOME" (estado fisico ou tendencia) e devolve o ordinal do nome.
+// Campo AUSENTE (linha do firmware antigo) deixa SEM_CLASSIFICACAO: nao se inventa
+// valor. Campo PRESENTE com nome desconhecido ou mal formado invalida a linha.
+static bool lerClassificacao(const char* linha, const char* chave, bool estado, uint8_t* saida) {
+  *saida = codec::SEM_CLASSIFICACAO;
+  if (!valorCampo(linha, chave)) return true;
+  char nome[20];
+  if (!campoTxt(linha, chave, nome, sizeof(nome))) return false;
+  const uint8_t maximo = estado ? codec::ESTADO_MAX : codec::TENDENCIA_MAX;
+  for (uint8_t i = 0; i <= maximo; i++) {
+    const char* candidato = estado ? nomeEstado((EstadoFisico)i) : nomeTendencia((TendenciaLocal)i);
+    if (strcmp(nome, candidato) == 0) { *saida = i; return true; }
+  }
+  return false;
+}
+
+// Converte uma linha NDJSON do arquivo no quadro v2 (n=1 por enquanto; o lote
 // de ate 6 entra no INC 7). "horaSinc" e metadado fora da banda do quadro v1.
 bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaSinc) {
   char tipo[12], idSensor[16], bootTexto[9], tsTexto[25], origem[12];
@@ -75,7 +95,8 @@ bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaSinc) {
   bootId = (uint32_t)strtoul(bootTexto, nullptr, 16);
   if (!campoTxt(linha, CAMPO_TIMESTAMP, tsTexto, sizeof(tsTexto))) return false;
   if (!parsearIso(tsTexto, &ts)) return false;
-  if (!campoDouble(linha, CAMPO_NIVEL_AGUA, &nivel) || nivel < 0.0 || nivel > 255.0) return false;
+  if (!campoDouble(linha, CAMPO_NIVEL_AGUA, &nivel) || !std::isfinite(nivel) || nivel < 0.0 ||
+      nivel > codec::NIVEL_MAX_DECIMOS / 10.0) return false;
   if (!campoU32(linha, CAMPO_BATERIA, &bateria) || bateria > 100) return false;
   campoU32(linha, CAMPO_DELTA_T_MS, &deltaMs);  // opcional
 
@@ -88,10 +109,14 @@ bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaSinc) {
     campoDouble(linha, CAMPO_LON, &lon);
   }
 
+  uint8_t estado = codec::SEM_CLASSIFICACAO, tendencia = codec::SEM_CLASSIFICACAO;
+  if (!lerClassificacao(linha, CAMPO_ESTADO, true, &estado)) return false;
+  if (!lerClassificacao(linha, CAMPO_TENDENCIA, false, &tendencia)) return false;
+
   q->flags = (uint8_t)((strcmp(origem, TEXTO_SIMULACAO) == 0 ? codec::FLAG_SIMULACAO : 0) |
                        (t == codec::BOOT ? codec::FLAG_COORDENADAS : 0));
   q->jardimIdx = 0;                    // config do gateway: 0 -> JARDIM_ID
-  q->seqBase = (uint16_t)seq;          // v1 usa u16; o cursor guarda o seq original
+  q->seqBase = seq;                    // 32 bits (v2); o cursor guarda o mesmo seq
   q->bootId = bootId;
   q->baseTs = ts;
   q->n = 1;
@@ -101,12 +126,14 @@ bool montarQuadroDaLinha(const char* linha, codec::Quadro* q, bool* horaSinc) {
   r.sensor = sensor;
   r.seq = q->seqBase;
   r.ts = ts;
-  r.nivelCm = (uint8_t)(nivel + 0.5);
+  r.nivelDecimos = (uint16_t)(nivel * 10.0 + 0.5);   // decimos de cm: 42.5 -> 425
   r.bateria = (uint8_t)bateria;
   r.deltaT = (uint16_t)(deltaMs / 100 > 65535 ? 65535 : deltaMs / 100);
   r.lat = (int32_t)(lat * 10000000.0 + (lat >= 0 ? 0.5 : -0.5));
   r.lon = (int32_t)(lon * 10000000.0 + (lon >= 0 ? 0.5 : -0.5));
   r.coords = (t == codec::BOOT);
+  r.estado = estado;
+  r.tendencia = tendencia;
   return true;
 }
 
@@ -135,7 +162,7 @@ bool montarJsonGateway(const codec::Quadro& q, int idx, bool horaSinc, char* out
   anexar(out, tam, usado, parte);
   snprintf(parte, sizeof(parte), "\"%s\":\"%s\",", CAMPO_ID_SENSOR, idSensor);
   anexar(out, tam, usado, parte);
-  snprintf(parte, sizeof(parte), "\"%s\":%.1f,", CAMPO_NIVEL_AGUA, (double)r.nivelCm);
+  snprintf(parte, sizeof(parte), "\"%s\":%.1f,", CAMPO_NIVEL_AGUA, r.nivelDecimos / 10.0);
   anexar(out, tam, usado, parte);
   snprintf(parte, sizeof(parte), "\"%s\":%u,", CAMPO_BATERIA, (unsigned)r.bateria);
   anexar(out, tam, usado, parte);
@@ -143,7 +170,7 @@ bool montarJsonGateway(const codec::Quadro& q, int idx, bool horaSinc, char* out
   anexar(out, tam, usado, parte);
   snprintf(parte, sizeof(parte), "\"%s\":%u,", CAMPO_SEQ, (unsigned)r.seq);
   anexar(out, tam, usado, parte);
-  snprintf(parte, sizeof(parte), "\"%s\":\"%08X\"", CAMPO_BOOT_ID, q.bootId);
+  snprintf(parte, sizeof(parte), "\"%s\":\"%08X\"", CAMPO_BOOT_ID, (unsigned)q.bootId);
   anexar(out, tam, usado, parte);
   if (r.tipo == codec::EVENTO && r.deltaT > 0) {
     snprintf(parte, sizeof(parte), ",\"%s\":%u", CAMPO_DELTA_T_MS, (unsigned)r.deltaT * 100);
@@ -152,6 +179,25 @@ bool montarJsonGateway(const codec::Quadro& q, int idx, bool horaSinc, char* out
   if (r.tipo == codec::BOOT) {
     snprintf(parte, sizeof(parte), ",\"%s\":%.6f,\"%s\":%.6f",
              CAMPO_LAT, r.lat / 10000000.0, CAMPO_LON, r.lon / 10000000.0);
+    anexar(out, tam, usado, parte);
+  }
+  // Campos v2: so saem se o registro tem classificacao. Registro antigo (0xFF)
+  // sai como sempre saiu. versaoRegra e a constante do firmware (nao viaja no quadro).
+  const bool temEstado = r.estado != codec::SEM_CLASSIFICACAO;
+  const bool temTendencia = r.tendencia != codec::SEM_CLASSIFICACAO;
+  if (!codec::classificacaoValida(r.estado, codec::ESTADO_MAX) ||
+      !codec::classificacaoValida(r.tendencia, codec::TENDENCIA_MAX)) return false;
+  if (temEstado) {
+    snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"", CAMPO_ESTADO, nomeEstado((EstadoFisico)r.estado));
+    anexar(out, tam, usado, parte);
+  }
+  if (temTendencia) {
+    snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"", CAMPO_TENDENCIA,
+             nomeTendencia((TendenciaLocal)r.tendencia));
+    anexar(out, tam, usado, parte);
+  }
+  if (temEstado || temTendencia) {
+    snprintf(parte, sizeof(parte), ",\"%s\":\"%s\"", CAMPO_VERSAO_REGRA, VERSAO_REGRA);
     anexar(out, tam, usado, parte);
   }
   snprintf(parte, sizeof(parte), ",\"%s\":%s,\"%s\":\"%s\"}",
@@ -188,7 +234,7 @@ static bool testarCodec(const char* nome, const Evento& e, const char* tsTexto) 
   q.flags = (uint8_t)((strcmp(TEXTO_ORIGEM, TEXTO_SIMULACAO) == 0 ? codec::FLAG_SIMULACAO : 0) |
                       (e.tipo == REG_BOOT ? codec::FLAG_COORDENADAS : 0));
   q.jardimIdx = 0;
-  q.seqBase = (uint16_t)e.seq;
+  q.seqBase = e.seq;
   q.bootId = (uint32_t)strtoul(g_bootId, nullptr, 16);
   q.baseTs = ts;
   q.n = 1;
@@ -198,12 +244,14 @@ static bool testarCodec(const char* nome, const Evento& e, const char* tsTexto) 
   r.sensor = (e.tipo == REG_EVENTO) ? e.sensor : codec::SENSOR_JARDIM;
   r.seq = e.seq;
   r.ts = ts;
-  r.nivelCm = (uint8_t)(e.nivelAgua + 0.5f);
+  r.nivelDecimos = (uint16_t)(e.nivelAgua * 10.0f + 0.5f);
   r.bateria = BATERIA_PADRAO;
   r.deltaT = (uint16_t)(e.deltaTMs / 100);
   r.lat = 0;
   r.lon = 0;
   r.coords = (e.tipo == REG_BOOT);
+  r.estado = e.estado;
+  r.tendencia = e.tendencia;
 
   uint8_t quadro[codec::MAX_COM_EXTRAS];
   size_t n = codec::codificar(q, quadro, sizeof(quadro));
@@ -213,7 +261,7 @@ static bool testarCodec(const char* nome, const Evento& e, const char* tsTexto) 
             d.baseTs == q.baseTs &&
             d.regs[0].tipo == r.tipo && d.regs[0].sensor == r.sensor &&
             d.regs[0].seq == r.seq && d.regs[0].ts == r.ts &&
-            d.regs[0].nivelCm == r.nivelCm && d.regs[0].bateria == r.bateria &&
+            d.regs[0].nivelDecimos == r.nivelDecimos && d.regs[0].bateria == r.bateria &&
             d.regs[0].deltaT == r.deltaT && d.regs[0].lat == r.lat &&
             d.regs[0].lon == r.lon && d.regs[0].coords == r.coords;
 
@@ -233,9 +281,10 @@ static bool testarCodec(const char* nome, const Evento& e, const char* tsTexto) 
 // Comando 't': round-trip dos tres tipos, incluindo o JSON do gateway.
 void rodarTesteCodec() {
   Serial.println("--- TESTE CODEC ---");
-  Evento ev{REG_EVENTO, 0, 5.0f, 3200, 0, 7, true};
-  Evento sn{REG_SNAPSHOT, 0, 10.0f, 0, 0, 8, true};
-  Evento bt{REG_BOOT, 0, 0.0f, 0, 0, 0, false};
+  // Sem classificacao (linha antiga), com estado e tendencia, e boot classificado.
+  Evento ev{REG_EVENTO, 0, 5.0f, 3200, 0, 7, true, codec::SEM_CLASSIFICACAO, codec::SEM_CLASSIFICACAO};
+  Evento sn{REG_SNAPSHOT, 0, 10.0f, 0, 0, 8, true, 1, 0};
+  Evento bt{REG_BOOT, 0, 0.0f, 0, 0, 0, false, 0, 3};
   bool ok = testarCodec("evento", ev, "2026-10-21T20:40:35Z");
   ok = testarCodec("snapshot", sn, "2026-10-21T20:40:40Z") && ok;
   ok = testarCodec("boot", bt, "2026-10-21T20:40:00Z") && ok;

@@ -74,6 +74,19 @@ GROUPS = {
         "buscarBackfill",
         "selecionarLote",
     ],
+    "iso": ["parsearIso", "formatarIso"],
+    "anexar": ["anexar"],
+    "linha": ["nomeTipo", "formatarIdSensor", "montarLinha"],
+    "gateway": [
+        "valorCampo",
+        "campoTxt",
+        "campoU32",
+        "campoDouble",
+        "lerClassificacao",
+        "montarQuadroDaLinha",
+        "montarJsonGateway",
+    ],
+    "rejeicao": ["contarRejeicaoQuadro"],
     "url": ["alternarUrlInvalida"],
     "backoff": ["backoffMs", "backoff429Ms", "agendarNovaTentativa"],
 }
@@ -87,6 +100,12 @@ TESTS = [
     ("url", "test_url.cpp", ["url"]),
     ("backoff", "test_backoff.cpp", ["backoff"]),
     ("sonda", "test_sonda.cpp", []),
+    ("estado_fisico", "test_estado_fisico.cpp", []),
+    ("tendencia_local", "test_tendencia_local.cpp", []),
+    ("gateway", "test_gateway.cpp", ["iso", "anexar", "gateway", "rejeicao"]),
+    ("sinalizacao", "test_sinalizacao.cpp", []),
+    ("classificador_sonda", "test_classificador_sonda.cpp", []),
+    ("linha", "test_linha.cpp", ["iso", "anexar", "linha", "gateway"]),
 ]
 
 START_RE = re.compile(
@@ -248,6 +267,34 @@ def check_estatico() -> bool:
         ok = False
     else:
         print("OK   sem chamada delay( no firmware")
+
+    # O loop() bloqueia em http.POST(): o totem tem de rodar em tarefa propria.
+    # Falha se loop() voltar a chamar atualizarTotem() ou se a tarefa nao for criada.
+    principal = (ESP32 / "src" / "main_alt.cpp").read_text(encoding="utf-8")
+    codigo_principal = "\n".join(l.split("//", 1)[0] for l in principal.splitlines())
+    corpo_loop = codigo_principal.split("void loop()", 1)[-1]
+    if re.search(r"\batualizarTotem\s*\(", corpo_loop):
+        print("FALHOU loop() chama atualizarTotem(): a sinalizacao congela durante o POST")
+        ok = False
+    elif not re.search(r"\biniciarTarefaTotem\s*\(", codigo_principal):
+        print("FALHOU main_alt.cpp nao cria a tarefa do totem (iniciarTarefaTotem)")
+        ok = False
+    else:
+        print("OK   totem em tarefa propria (loop() nao o atualiza)")
+
+    # JARDIM_ID em constante unica: o id antigo nao pode reaparecer no codigo.
+    legado = []
+    for arquivo in CHECK_SOURCES + [MODULES_DIR / "config.h"]:
+        for numero, linha in enumerate(
+            arquivo.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            if "jardim-centro-01" in linha.split("//", 1)[0]:
+                legado.append(f"{arquivo.name} linha {numero}")
+    if legado:
+        print("FALHOU id legado jardim-centro-01 no codigo: " + "; ".join(legado))
+        ok = False
+    else:
+        print("OK   id legado jardim-centro-01 nao aparece no codigo (JARDIM_ID unico)")
 
     # Criterio 11: secrets.h ignorado e nao versionado.
     repo = subprocess.run(
