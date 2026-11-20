@@ -67,6 +67,22 @@ public record LeituraRequest(
 
         /** Versão da regra que classificou o registro (ex.: "v1-provisoria-2026-11"). Opcional. */
         @Size(max = 64)
-        String versaoRegra
+        String versaoRegra,
+
+        /**
+         * [SCRUM-28][SW-14] Tipo do registro enviado pelo firmware. Um "boot" não é medição
+         * (nível fictício) e fica fora da tendência. Opcional: ausente no simulador e em
+         * registros antigos, que continuam elegíveis.
+         */
+        @Pattern(regexp = "evento|snapshot|boot", message = "deve ser um de evento, snapshot, boot")
+        String tipo,
+
+        /** [SCRUM-28][SW-14] Identificador do boot (8 hex). Com seq, identifica a leitura. Opcional. */
+        @Pattern(regexp = "[0-9A-Fa-f]{8}", message = "deve ter 8 caracteres hexadecimais")
+        String bootId,
+
+        /** [SCRUM-28][SW-14] Contador do registro no boot (32 bits sem sinal no firmware). Opcional. */
+        @PositiveOrZero @Max(4294967295L)
+        Long seq
 ) {
 }
