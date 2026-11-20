@@ -20,7 +20,7 @@ Requisitos: `g++` com C++17 e Python 3.9+. O runner gera os trechos em
 
 | Arquivo | Cobertura |
 |---|---|
-| `test_codec.cpp` | Round-trip do codec v1 para evento, snapshot e boot, gap de `seq`, timestamp absoluto, coordenadas e quadros inválidos. |
+| `test_codec.cpp` | Round-trip do codec v2 (nível em décimos de cm, faixa validada) para evento, snapshot e boot, gap de `seq`, timestamp absoluto, coordenadas e quadros inválidos. |
 | `test_compactacao.cpp` | Compactação forçada e normal (64 KB), cursor, `perdidosNaoConfirmados`, `'x'` (linha truncada), `'f'`, arquivo com 2 linhas e limite de 3/4. |
 | `test_latencia.cpp` | p50/p95 por posto mais próximo, anel de 128, filtros `horaSincronizada`/boot corrente, relógio inválido e timestamp futuro. |
 | `test_drenagem_20min.cpp` | Seca de 20 min (241 registros) com a política real do 7B: âncora, boot, eventos, backfill dizimado, contabilidade e cursor. Também simula falha total no primeiro lote (500/timeout) e confirma que o mesmo conjunto é retentado sem perda; por fim, perde o cursor após drenar e mostra 25 duplicatas identificáveis por `(bootId, seq)`. |
@@ -29,11 +29,11 @@ Requisitos: `g++` com C++17 e Python 3.9+. O runner gera os trechos em
 | `test_sonda.cpp` | Sonda HW-02: janela de 500 ms, média de 10 leituras, conversão ADC → cm, `pronta` separado de `mudou` (variação ≥ 1 cm), taxa assinada e regressão de 10 min parado + 2 cm. Também registra a limitação atual de saturação (calibração nominal). |
 | `test_estado_fisico.cpp` | Estado físico (faixas 22 / 45 / 60 cm, histerese de 2 cm, entrada inválida), lendo `test/vetores/estado.csv`. |
 | `test_tendencia_local.cpp` | Tendência local (janela de 5 válidas, tolerância 1,5 cm, boot atual, `seq` de 32 bits, histórico), lendo `test/vetores/tendencia.csv`. |
-| `test_gateway.cpp` | Linha NDJSON antiga continua enviada sem os campos novos, round-trip de linhas novas, nome desconhecido, maior linha em `TAMANHO_LINHA`, contador de rejeição por versão. |
-| `test_linha.cpp` | `montarLinha` com `J01` e os campos novos na ordem do gateway; round-trip linha → quadro v2 → JSON. |
+| `test_gateway.cpp` | Nível acima de 255,0 cm recusado no codec. Linha NDJSON antiga continua enviada sem os campos novos, round-trip de linhas novas, nome desconhecido, maior linha em `TAMANHO_LINHA`, contador de rejeição por versão. |
+| `test_linha.cpp` | `montarLinha` com `J01` e os campos novos na ordem do gateway; round-trip linha → quadro v2 → JSON; **nível decimal preservado** (42,5 não vira 43,0); `nivelAgua` inválido (`nan`, `inf`, negativo, > 255,0) recusado. |
 | `test_classificador_sonda.cpp` | Estado da sonda com histerese (`0xFF` sem leitura) e tendência só dos snapshots. |
 | `test_sinalizacao.cpp` | LEDs e buzzer (política do som, piscar, padrão de 3 pulsos), conversão dos bytes publicados. |
-| `run_tests.py` (estático) | O id legado `jardim-centro-01` não aparece no código (`JARDIM_ID` único). Nenhuma chamada `delay(` em `src/main_alt.cpp` nem em `src/modulos/*.cpp`; `secrets.h` ignorado e não versionado; `secrets.example.h` versionado. |
+| `run_tests.py` (estático) | O id legado `jardim-centro-01` não aparece no código (`JARDIM_ID` único). Nenhuma chamada `delay(` em `src/main_alt.cpp` nem em `src/modulos/*.cpp`; o `loop()` não chama `atualizarTotem()` (o totem roda em tarefa própria, pois o `loop()` bloqueia em `http.POST()`); `secrets.h` ignorado e não versionado; `secrets.example.h` versionado. |
 
 ## Limitações
 

@@ -65,10 +65,12 @@ O commit com este relatório e o roteiro é o 18º (`docs`).
   de `horaSincronizada`. Só saem se o registro tem classificação.
 - **`idJardim`:** `J01` (constante única `JARDIM_ID`). Linhas antigas com `jardim-centro-01`
   saem com `J01` (migração silenciosa).
-- **Quadro v2** (versão `0x02`): registro de 9 bytes, cabeçalho de 16. Constantes: `MAX_BYTES` 70, `MAX_COM_EXTRAS` 148
-  (limite folgado; o pior caso real é 147). O quadro **não é persistido**: é montado do NDJSON no envio, então não há
+- **Quadro v2** (versão `0x02`): registro de 10 bytes, cabeçalho de 16. O nível viaja em **décimos de cm** (`uint16_t`,
+  0–2550 = 0,0–255,0 cm), para preservar a casa decimal do contrato (`nivelAgua` decimal); o codec rejeita nível acima de 2550.
+  Constantes: `MAX_BYTES` 76, `MAX_COM_EXTRAS` 154 (limite folgado; o pior caso real é 153). O v2 ainda não existe em `develop`
+  (lá o quadro é v1), então o ajuste de layout não quebra nenhum receptor em uso. O quadro **não é persistido**: é montado do NDJSON no envio, então não há
   quadro v1 pendente.
-- `TAMANHO_LINHA`: 320 → **384** (a linha mais longa chega a 351 bytes com os campos novos).
+- `TAMANHO_LINHA`: 320 → **384** (a linha mais longa chega a 328 bytes com os campos novos, medido no pior caso de boot; o buffer de 384 tem folga).
 - `docs/contrato-telemetria.md` e `docs/dicionario-de-dados.md` **não foram atualizados** nesta tarefa
   (as decisões pedem corrigir os três no mesmo commit). Fica para a Tarefa F ou para a Júlia.
 
@@ -143,9 +145,10 @@ Justificativa do espaçamento:
 
 ## 7. Verificação e pendências
 
-**Executado:** `python3 test/host/run_tests.py` → **14/14 grupos OK**, 0 warnings nos testes novos.
-Verificações por grupo: codec 65, compactação 55, latência 20, drenagem 28, url 6, backoff 31, sonda 23,
-estado físico 52, tendência local 69, gateway 40, sinalização 76, classificador da sonda 19, linha 24.
+**Executado:** `python3 test/host/run_tests.py` → **14/14 grupos OK** (13 grupos de teste + checagens estáticas), 0 warnings nos testes novos.
+Verificações por grupo (execução de 2026-11-20 após as correções do review): codec 69, compactação 55, latência 20,
+drenagem 28, url 6, backoff 31, sonda 23, estado físico 52, tendência local 69, gateway 40, sinalização 81,
+classificador da sonda 19, linha 38 (total 531).
 Fuzz da inserção na janela de tendência: 200.000 casos, 0 divergências (executado fora do repositório, não versionado).
 
 **NÃO executado (pendências):**

@@ -27,6 +27,9 @@ static uint32_t backoff429Ms(uint32_t falhas) {
 // Quadro rejeitado pelo decodificador. Conta (comando 'i': rejeitadosVersao),
 // loga a versao recebida e deixa o motivo em g_ultimoErro. So a versao entra no
 // contador; os demais motivos seguem como falha de codec.
+// LIMITACAO: hoje so e chamada no #ifdef SIMULATION, sobre o quadro que o proprio
+// firmware codificou, entao em operacao normal o contador fica em 0 (preparado
+// para o radio; ainda nao ha caminho real de recepcao).
 void contarRejeicaoQuadro(codec::MotivoRejeicao motivo, uint8_t versaoRecebida) {
   if (motivo != codec::MotivoRejeicao::VERSAO) return;
   g_envio.rejeitadosVersao++;
