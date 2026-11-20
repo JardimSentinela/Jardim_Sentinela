@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  fetchHistorico,
-  fetchJardim,
-  iniciarLoteDeConsultas,
-  ultimoLoteUsouMock,
-} from '../services/api'
-import { dadosCOPMock } from '../services/mockData'
-import { calcularStatusAlerta } from '../types/jardim'
+import { fetchDadosCOP, fetchHistorico, fetchJardim } from '../services/api'
+import { alertaDoJardim } from '../types/jardim'
 import type {
   DadosCOP,
   InformacoesAlerta,
@@ -30,14 +24,13 @@ export interface UseJardimDataResultado {
   cop: DadosCOP
   loading: boolean
   error: Error | null
-  /** `true` quando a última carga precisou dos dados mockados. */
-  isMock: boolean
   refetch: () => Promise<void>
 }
 
 /**
- * Carrega estado atual + histórico de um jardim, com polling e fallback para
- * dados mockados quando a API não está disponível.
+ * Carrega estado atual + histórico de um jardim direto da API, com polling.
+ * Em caso de falha, mantém os últimos dados válidos e expõe `error` para a
+ * interface mostrar o aviso e o botão "Tentar novamente".
  */
 export function useJardimData(
   jardimId: string,
@@ -51,7 +44,6 @@ export function useJardimData(
   const [historico, setHistorico] = useState<Leitura[]>([])
   const [loading, setLoading] = useState<boolean>(Boolean(jardimId))
   const [error, setError] = useState<Error | null>(null)
-  const [isMock, setIsMock] = useState(false)
 
   const jardimIdAtualRef = useRef(jardimId)
   jardimIdAtualRef.current = jardimId
@@ -64,6 +56,7 @@ export function useJardimData(
       if (!jardimId) {
         setJardim(null)
         setHistorico([])
+        setError(null)
         setLoading(false)
         return
       }
@@ -76,7 +69,6 @@ export function useJardimData(
       if (mostrarLoading) {
         setLoading(true)
       }
-      iniciarLoteDeConsultas()
 
       try {
         const [jardimAtualizado, historicoAtualizado] = await Promise.all([
@@ -91,7 +83,6 @@ export function useJardimData(
         setJardim(jardimAtualizado)
         setHistorico(historicoAtualizado)
         setError(null)
-        setIsMock(ultimoLoteUsouMock())
       } catch (erro) {
         if (jardimIdAtualRef.current !== jardimId) {
           return
@@ -102,7 +93,6 @@ export function useJardimData(
             ? erro
             : new Error('Falha ao carregar os dados do jardim.'),
         )
-        setIsMock(ultimoLoteUsouMock())
       } finally {
         if (consultaEmAndamentoRef.current === jardimId) {
           consultaEmAndamentoRef.current = null
@@ -120,7 +110,6 @@ export function useJardimData(
     setJardim(null)
     setHistorico([])
     setError(null)
-    setIsMock(false)
     setLoading(Boolean(jardimId))
   }, [jardimId])
 
@@ -147,11 +136,11 @@ export function useJardimData(
   }, [carregar])
 
   const alerta = useMemo<InformacoesAlerta | null>(
-    () => (jardim ? calcularStatusAlerta(jardim.nivelCm) : null),
+    () => (jardim ? alertaDoJardim(jardim) : null),
     [jardim],
   )
 
-  const cop = useMemo<DadosCOP>(() => dadosCOPMock, [])
+  const cop = useMemo<DadosCOP>(() => fetchDadosCOP(), [])
 
   return {
     jardim,
@@ -160,7 +149,6 @@ export function useJardimData(
     cop,
     loading,
     error,
-    isMock,
     refetch,
   }
 }

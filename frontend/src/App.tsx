@@ -52,13 +52,13 @@ function StatusConexao({
     ? 'Verificando conexão…'
     : conectado
       ? 'Conectado à API Java'
-      : 'Dados Mockados / Demonstração'
+      : 'API indisponível'
 
   const cor = verificando
     ? 'text-[var(--cor-texto-suave)]'
     : conectado
       ? 'text-[#005b7f] dark:text-[#4cc7fb]'
-      : 'text-[#071d41] dark:text-[#e4b739]'
+      : 'text-[#9a3412] dark:text-[#fdba74]'
 
   return (
     <span
@@ -66,7 +66,7 @@ function StatusConexao({
       title={
         conectado
           ? 'Os dados exibidos vêm da API Java do Jardim Sentinela.'
-          : 'A API não respondeu; exibindo dados de demonstração.'
+          : 'A API não respondeu; os dados de jardins não puderam ser atualizados.'
       }
     >
       <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />
@@ -83,7 +83,7 @@ function App() {
   const [buscaAberta, setBuscaAberta] = useState(false)
   const areaBuscaRef = useRef<HTMLDivElement>(null)
 
-  const { jardim, alerta, cop, loading, error, isMock, refetch } = useJardimData(
+  const { jardim, alerta, cop, loading, error, refetch } = useJardimData(
     jardimSelecionado,
     {
       intervaloPollingMs: 5000,
@@ -116,7 +116,7 @@ function App() {
   }, [busca])
 
   const verificandoConexao = loading && !jardim
-  const conectado = !isMock && !verificandoConexao && !error
+  const conectado = !error && !verificandoConexao
 
   function selecionarJardim(id: JardimId) {
     setJardimSelecionado(id)
