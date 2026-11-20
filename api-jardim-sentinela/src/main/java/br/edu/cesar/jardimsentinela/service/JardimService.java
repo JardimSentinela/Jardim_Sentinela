@@ -1,12 +1,15 @@
 package br.edu.cesar.jardimsentinela.service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import br.edu.cesar.jardimsentinela.dto.JardimResponse;
+import br.edu.cesar.jardimsentinela.dto.JardimResumoResponse;
 import br.edu.cesar.jardimsentinela.entity.Leitura;
 import br.edu.cesar.jardimsentinela.repository.LeituraRepository;
 
@@ -24,8 +27,18 @@ public class JardimService {
 
     /** Estado atual do jardim = sua leitura mais recente. Vazio se o jardim nunca enviou dados. */
     public Optional<JardimResponse> buscarJardim(String jardimId) {
-        return leituraRepository.findFirstByJardimIdOrderByRecebidoEmDescIdDesc(jardimId)
+        return leituraRepository.findHistorico(jardimId, PageRequest.of(0, 1)).stream().findFirst()
                 .map(ultima -> JardimResponse.de(ultima, leituraRepository.countByJardimId(jardimId)));
+    }
+
+    /** Resumo de cada jardim que já enviou dados, ordenado por jardimId. Jardim sem leitura não aparece. */
+    public List<JardimResumoResponse> listarJardins() {
+        // Duas queries fixas, independentes do número de jardins (antes: 1 + 2N).
+        Map<String, Long> totais = leituraRepository.contarLeiturasPorJardim().stream()
+                .collect(Collectors.toMap(linha -> (String) linha[0], linha -> (Long) linha[1]));
+        return leituraRepository.findUltimaLeituraDeCadaJardim().stream()
+                .map(ultima -> JardimResumoResponse.de(ultima, totais.getOrDefault(ultima.getJardimId(), 0L)))
+                .toList();
     }
 
     /** Histórico do mais recente para o mais antigo. Vazio se o jardim nunca enviou dados. */
@@ -34,7 +47,7 @@ public class JardimService {
             return Optional.empty();
         }
         int limiteEfetivo = Math.min(Math.max(limite, 1), LIMITE_MAXIMO);
-        return Optional.of(leituraRepository.findByJardimIdOrderByRecebidoEmDescIdDesc(
+        return Optional.of(leituraRepository.findHistorico(
                 jardimId, PageRequest.of(0, limiteEfetivo)));
     }
 }

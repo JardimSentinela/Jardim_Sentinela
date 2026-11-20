@@ -49,4 +49,59 @@ class WebConfigCorsTests {
                 .andExpect(status().isOk())
                 .andExpect(header().exists(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS));
     }
+
+    // [SCRUM-20][SW-11] Headers permitidos explícitos (sem "*"): só os que o dashboard usa.
+
+    @Test
+    void preflightLiberaApenasContentTypeEAccept() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type, accept"))
+                .andExpect(status().isOk())
+                .andExpect(header().exists(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS));
+    }
+
+    @Test
+    void preflightComHeaderNaoListadoERecusado() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "x-qualquer-coisa"))
+                .andExpect(status().isForbidden());
+    }
+
+    // [SCRUM-20][SW-11] Lista fechada de origens (decisões §6.6), sem "*".
+
+    @Test
+    void origemPermitidaRecebeSuaPropriaOrigemNoCabecalho() throws Exception {
+        for (String origem : new String[] {"http://localhost:5173", "http://localhost:4173"}) {
+            mvc.perform(get("/api/leituras").header(HttpHeaders.ORIGIN, origem))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origem));
+        }
+    }
+
+    @Test
+    void preflightDeOrigemPermitidaRetornaOrigemEspecifica() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:4173")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:4173"));
+    }
+
+    @Test
+    void origemNaoPermitidaNaoRecebeCabecalhoCors() throws Exception {
+        mvc.perform(get("/api/leituras").header(HttpHeaders.ORIGIN, "http://site-malicioso.example"))
+                .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
+    }
+
+    @Test
+    void preflightDeOrigemNaoPermitidaNaoRecebeCabecalhoCors() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://site-malicioso.example")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST"))
+                .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
+    }
 }
