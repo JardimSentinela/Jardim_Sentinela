@@ -29,6 +29,15 @@ public class Leitura {
      */
     private Instant timestampDispositivo;
 
+    /** [SCRUM-20][SW-11] Estado físico enviado pelo dispositivo. Nulo em registros antigos (sem classificação). */
+    private String estado;
+
+    /** [SCRUM-20][SW-11] Tendência enviada pelo dispositivo, guardada para auditoria. Não é recalculada. */
+    private String tendenciaDispositivo;
+
+    /** [SCRUM-20][SW-11] Versão da regra que gerou estado/tendência. */
+    private String versaoRegra;
+
     protected Leitura() {
         // exigido pelo JPA
     }
@@ -47,6 +56,14 @@ public class Leitura {
         this.timestampDispositivo = timestampDispositivo;
     }
 
+    public Leitura(String jardimId, String sensorId, Double nivelCm, Integer bateria, Instant recebidoEm,
+                    Instant timestampDispositivo, String estado, String tendenciaDispositivo, String versaoRegra) {
+        this(jardimId, sensorId, nivelCm, bateria, recebidoEm, timestampDispositivo);
+        this.estado = estado;
+        this.tendenciaDispositivo = tendenciaDispositivo;
+        this.versaoRegra = versaoRegra;
+    }
+
     public Long getId() { return id; }
     public String getJardimId() { return jardimId; }
     public String getSensorId() { return sensorId; }
@@ -54,4 +71,7 @@ public class Leitura {
     public Integer getBateria() { return bateria; }
     public Instant getRecebidoEm() { return recebidoEm; }
     public Instant getTimestampDispositivo() { return timestampDispositivo; }
+    public String getEstado() { return estado; }
+    public String getTendenciaDispositivo() { return tendenciaDispositivo; }
+    public String getVersaoRegra() { return versaoRegra; }
 }

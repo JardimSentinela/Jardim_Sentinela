@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import br.edu.cesar.jardimsentinela.dto.JardimResponse;
+import br.edu.cesar.jardimsentinela.dto.JardimResumoResponse;
 import br.edu.cesar.jardimsentinela.entity.Leitura;
 import br.edu.cesar.jardimsentinela.exception.JardimNaoEncontradoException;
 import br.edu.cesar.jardimsentinela.service.JardimService;
@@ -20,6 +21,11 @@ public class JardimController {
 
     public JardimController(JardimService jardimService) {
         this.jardimService = jardimService;
+    }
+
+    @GetMapping("/api/jardins")
+    public List<JardimResumoResponse> listarJardins() {
+        return jardimService.listarJardins();
     }
 
     @GetMapping("/api/jardins/{id}")

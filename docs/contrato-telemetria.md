@@ -87,6 +87,7 @@ Endpoints de leitura (detalhes e exemplos em `docs/api-dashboard.md`):
 | ----------------------------------------- | -------------------------------------------------------------------- |
 | `GET /api/jardins/{id}`                   | Última leitura + `ultimaLeituraEm` + `totalLeituras`; 404 se o jardim nunca enviou dado |
 | `GET /api/jardins/{id}/leituras?limite=N` | Histórico, mais recente primeiro; `limite` padrão 100, máximo 1000   |
+| `GET /api/jardins/{id}/tendencia`         | [SCRUM-28] Tendência do nível (6 estados) pelas 5 leituras válidas mais recentes, ordenadas por `COALESCE(timestampDispositivo, recebidoEm)`; 404 se o jardim nunca enviou dado. Campos em `docs/dicionario-de-dados.md`, seção 3.1 |
 
 ### 1.4 Idempotência (reenvio)
 
