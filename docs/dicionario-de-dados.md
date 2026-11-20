@@ -68,7 +68,7 @@ dado**. Não crie um terceiro nome (`medidoEm`, `dataLeitura`…).
 | ----------------- | --------------- | ------------------------------------------------------------ |
 | `jardimId`        | string          | Id do jardim                                                 |
 | `nivelCm`         | decimal (cm)    | Nível da leitura mais recente                                |
-| `estado`          | string (enum)   | Estado do registro mais recente, como o dispositivo enviou; `null` sem classificação |
+| `estado`          | string (enum)   | Mesma regra de `estado` em `GET /api/jardins/{id}` (seção 3): o do registro mais recente ou, se ele não traz estado, o último válido dentro da idade máxima; `null` sem classificação |
 | `ultimaLeituraEm` | ISO-8601 UTC    | `timestampDispositivo` (ou `recebidoEm` se nulo) da leitura mais recente |
 | `totalLeituras`   | inteiro         | Quantidade de leituras do jardim                             |
 

@@ -53,6 +53,13 @@ public class JardimService {
                                 .map(t -> t.tendencia().name()).orElse(null)));
     }
 
+    private static String estadoDaLista(Leitura ultima, Map<String, String> estados) {
+        if (ultima.getEstado() != null && !Leitura.TIPO_BOOT.equals(ultima.getTipo())) {
+            return ultima.getEstado();
+        }
+        return estados.get(ultima.getJardimId());
+    }
+
     private String estadoValido(Leitura ultima, String jardimId) {
         if (ultima.getEstado() != null && !Leitura.TIPO_BOOT.equals(ultima.getTipo())) {
             return ultima.getEstado();
@@ -64,11 +71,16 @@ public class JardimService {
 
     /** Resumo de cada jardim que já enviou dados, ordenado por jardimId. Jardim sem leitura não aparece. */
     public List<JardimResumoResponse> listarJardins() {
-        // Duas queries fixas, independentes do número de jardins (antes: 1 + 2N).
+        // Queries fixas, independentes do número de jardins (antes: 1 + 2N).
         Map<String, Long> totais = leituraRepository.contarLeiturasPorJardim().stream()
                 .collect(Collectors.toMap(linha -> (String) linha[0], linha -> (Long) linha[1]));
+        // Terceira query fixa: último estado válido por jardim (mesma regra do detalhe).
+        Map<String, String> estados = leituraRepository
+                .findUltimoEstadoValidoDeCadaJardim(relogio.instant().minus(propriedades.idadeMaxima()))
+                .stream().collect(Collectors.toMap(Leitura::getJardimId, Leitura::getEstado));
         return leituraRepository.findUltimaLeituraDeCadaJardim().stream()
-                .map(ultima -> JardimResumoResponse.de(ultima, totais.getOrDefault(ultima.getJardimId(), 0L)))
+                .map(ultima -> JardimResumoResponse.de(ultima, totais.getOrDefault(ultima.getJardimId(), 0L),
+                        estadoDaLista(ultima, estados)))
                 .toList();
     }
 

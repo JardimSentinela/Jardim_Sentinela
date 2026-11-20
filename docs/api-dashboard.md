@@ -96,8 +96,8 @@ curl http://localhost:8080/api/jardins/J01
   mais recente traz estado, ele vale como sempre valeu; a defasagem aparece em
   `ultimaLeituraEm` e em `tendencia: "DESATUALIZADO"`.
   `nivelCm`, `ultimaLeituraEm` e `totalLeituras` continuam sendo do registro mais recente,
-  inclusive um `boot`. A lista `GET /api/jardins` ainda mostra o estado do registro mais
-  recente (pendência registrada na lista de decisões da equipe).
+  inclusive um `boot`. A lista `GET /api/jardins` usa a mesma regra de estado (último estado
+  válido, dentro da idade máxima, sem `boot`), com 3 queries fixas.
 - `tendencia`: calculada pela API (SW-14), com a **mesma regra** de
   `GET /api/jardins/{id}/tendencia`: `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`,
   `INDETERMINADO` ou `DESATUALIZADO`. No exemplo, a única leitura é menos que as 5 da

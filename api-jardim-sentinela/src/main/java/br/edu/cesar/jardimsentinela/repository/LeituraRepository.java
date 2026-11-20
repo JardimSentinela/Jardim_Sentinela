@@ -41,6 +41,25 @@ public interface LeituraRepository extends JpaRepository<Leitura, Long> {
             """)
     List<Leitura> findUltimaLeituraDeCadaJardim();
 
+    /**
+     * [SCRUM-28][SW-14] Último estado válido de cada jardim (mesma regra de
+     * {@link #findComEstadoElegivel}: elegível, com estado, recebido desde {@code recebidoDesde}),
+     * numa única query para a lista não voltar ao N+1.
+     */
+    @Query("""
+            select l from Leitura l
+            where l.estado is not null and (l.tipo is null or l.tipo <> 'boot')
+              and l.recebidoEm >= :recebidoDesde
+              and not exists (
+                select 1 from Leitura o
+                where o.jardimId = l.jardimId and o.estado is not null
+                  and (o.tipo is null or o.tipo <> 'boot') and o.recebidoEm >= :recebidoDesde
+                  and (coalesce(o.timestampDispositivo, o.recebidoEm) > coalesce(l.timestampDispositivo, l.recebidoEm)
+                       or (coalesce(o.timestampDispositivo, o.recebidoEm) = coalesce(l.timestampDispositivo, l.recebidoEm)
+                           and o.id > l.id)))
+            """)
+    List<Leitura> findUltimoEstadoValidoDeCadaJardim(@Param("recebidoDesde") Instant recebidoDesde);
+
     /** [SCRUM-20][SW-11] Total de leituras por jardim (linhas {jardimId, total}) numa única query. */
     @Query("select l.jardimId, count(l) from Leitura l group by l.jardimId")
     List<Object[]> contarLeiturasPorJardim();
