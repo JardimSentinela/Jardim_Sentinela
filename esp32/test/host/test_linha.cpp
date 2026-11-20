@@ -171,6 +171,42 @@ static void testarMaiorLinhaNaoTrunca() {
          "boot mais longo termina inteiro (nada truncado)");
 }
 
+// Regressao do review da SW-13: nivel decimal nao pode ser arredondado no envio.
+static void testarNivelDecimalPreservado() {
+  const float niveis[] = {42.5f, 12.5f, 0.1f, 59.9f, 100.0f, 255.0f};
+  for (float n : niveis) {
+    std::string linha = montar(evento(REG_SNAPSHOT, 0, n, 0, 8, true, SEM, SEM)), json;
+    char esperado[24];
+    std::snprintf(esperado, sizeof(esperado), "\"nivelAgua\":%.1f,", (double)n);
+    checar(viaGateway(linha, &json) && json == linha && contem(json, esperado),
+           std::string("nivel ") + std::to_string(n) + " chega ao JSON sem arredondar");
+  }
+  std::string json;
+  viaGateway(montar(evento(REG_SNAPSHOT, 0, 42.5f, 0, 8, true, SEM, SEM)), &json);
+  checar(contem(json, "\"nivelAgua\":42.5,") && !contem(json, "43.0"), "42.5 nao vira 43.0");
+}
+
+// Linha com nivel invalido e recusada, nunca convertida em valor inventado.
+static void testarNivelInvalidoRecusado() {
+  const char* modelo = "{\"tipo\":\"snapshot\",\"idJardim\":\"J01\",\"idSensor\":\"jardim\","
+                       "\"nivelAgua\":%s,\"bateria\":100,\"timestamp\":\"2026-10-21T20:40:35Z\","
+                       "\"seq\":8,\"bootId\":\"A1B2C3D4\",\"horaSincronizada\":true,\"origem\":\"simulacao\"}";
+  const char* ruins[] = {"nan", "inf", "-1.0", "255.1", "1e9", "abc"};
+  for (const char* v : ruins) {
+    char linha[400];
+    std::snprintf(linha, sizeof(linha), modelo, v);
+    codec::Quadro q{};
+    bool hs = false;
+    checar(!montarQuadroDaLinha(linha, &q, &hs), std::string("nivelAgua=") + v + " e recusado");
+  }
+  char linha[400];
+  std::snprintf(linha, sizeof(linha), modelo, "255.0");
+  codec::Quadro q{};
+  bool hs = false;
+  checar(montarQuadroDaLinha(linha, &q, &hs) && q.regs[0].nivelDecimos == 2550,
+         "nivelAgua=255.0 (limite) e aceito");
+}
+
 static void testarIdSensor() {
   char b[16];
   formatarIdSensor(evento(REG_EVENTO, 3, 1, 0, 1, true, SEM, SEM), b, sizeof(b));
@@ -185,6 +221,8 @@ int main() {
   testarComClassificacao();
   testarSoUmCampo();
   testarRoundTrip();
+  testarNivelDecimalPreservado();
+  testarNivelInvalidoRecusado();
   testarMaiorLinhaNaoTrunca();
   testarIdSensor();
 

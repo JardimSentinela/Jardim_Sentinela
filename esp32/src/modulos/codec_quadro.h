@@ -3,8 +3,9 @@
 #include <stddef.h>
 
 // Codec do "Quadro no ar v2" (little-endian), compartilhado pelo firmware e
-// pelo gateway local da simulacao. v2 = v1 + 2 bytes por registro (estado fisico
-// e tendencia; 0xFF = sem classificacao) e seqBase de 32 bits. O quadro NAO e
+// pelo gateway local da simulacao. v2 = v1 + 3 bytes por registro (estado fisico
+// e tendencia; 0xFF = sem classificacao; nivel em decimos de cm, uint16) e seqBase
+// de 32 bits. O quadro NAO e
 // persistido: e montado a partir do NDJSON no envio. Versoes diferentes de
 // VERSAO sao rejeitadas. Nao depende de Arduino (testavel no host).
 namespace codec {
@@ -12,8 +13,12 @@ namespace codec {
 constexpr uint8_t  VERSAO          = 0x02;
 constexpr size_t   CABECALHO       = 16;
 constexpr uint8_t  MAX_REGISTROS   = 6;
-constexpr size_t   MAX_BYTES       = 70;   // 16 + 6 x 9: 6 registros sem gap/absoluto/coords
-constexpr size_t   MAX_COM_EXTRAS  = 148;  // limite folgado: 70 + 6 x (gap+abs+coords); o real e 147
+constexpr size_t   BYTES_REGISTRO  = 10;   // meta(1) dTs(2) nivel(2) bateria(1) deltaT(2) estado(1) tendencia(1)
+constexpr size_t   MAX_BYTES       = 76;   // 16 + 6 x 10: 6 registros sem gap/absoluto/coords
+constexpr size_t   MAX_COM_EXTRAS  = 154;  // limite folgado: 76 + 6 x (gap+abs+coords); o real e 153
+// Nivel no fio em DECIMOS de cm (42,5 cm = 425): preserva a casa decimal que o
+// contrato (nivelAgua decimal) promete. Limite = 255,0 cm, o mesmo do gateway.
+constexpr uint16_t NIVEL_MAX_DECIMOS = 2550;
 constexpr uint8_t  SENSOR_JARDIM   = 31;
 constexpr uint16_t DTS_ABSOLUTO    = 0xFFFF;
 constexpr uint8_t  FLAG_SIMULACAO  = 0x01; // bit0: origem simulada
@@ -40,7 +45,7 @@ struct Registro {
   uint8_t  sensor;     // 0..30; 31 = jardim
   uint32_t seq;
   uint32_t ts;
-  uint8_t  nivelCm;
+  uint16_t nivelDecimos;   // decimos de cm, 0..NIVEL_MAX_DECIMOS
   uint8_t  bateria;
   uint16_t deltaT;     // unidades de 0,1 s; 0 = ausente
   int32_t  lat;        // 1e-7 graus
@@ -97,7 +102,8 @@ inline size_t tamanho(const Quadro& q) {
   uint32_t anterior = q.seqBase;
   for (uint8_t i = 0; i < q.n; i++) {
     const Registro& r = q.regs[i];
-    if (r.tipo > BOOT || r.sensor > SENSOR_JARDIM || r.bateria > 100) return 0;
+    if (r.tipo > BOOT || r.sensor > SENSOR_JARDIM || r.bateria > 100 ||
+        r.nivelDecimos > NIVEL_MAX_DECIMOS) return 0;
     if (i == 0) {
       if (r.seq != q.seqBase) return 0;   // seqBase e o seq do primeiro registro
     } else {
@@ -111,7 +117,7 @@ inline size_t tamanho(const Quadro& q) {
     if ((q.flags & FLAG_COORDENADAS) && r.tipo == BOOT) t += 8;
     if (!classificacaoValida(r.estado, ESTADO_MAX) ||
         !classificacaoValida(r.tendencia, TENDENCIA_MAX)) return 0;
-    t += 9;
+    t += BYTES_REGISTRO;
     anterior = r.seq;
   }
   return t;
@@ -147,7 +153,7 @@ inline size_t codificar(const Quadro& q, uint8_t* out, size_t capacidade) {
     } else {
       put16(out, p, (uint16_t)d);
     }
-    out[p++] = r.nivelCm;
+    put16(out, p, r.nivelDecimos);
     out[p++] = r.bateria;
     put16(out, p, r.deltaT);
     out[p++] = r.estado;
@@ -162,7 +168,7 @@ inline size_t codificar(const Quadro& q, uint8_t* out, size_t capacidade) {
   return p;   // == total
 }
 
-// Decodifica um quadro completo. Rejeita versao, n, tipo, bateria, estado,
+// Decodifica um quadro completo. Rejeita versao, n, tipo, bateria, nivel, estado,
 // tendencia e tamanho invalidos; exige que o buffer termine exatamente no fim
 // do ultimo registro. "motivo" (opcional) diz por que foi rejeitado.
 inline bool decodificar(const uint8_t* in, size_t tam, Quadro* q,
@@ -177,7 +183,7 @@ inline bool decodificar(const uint8_t* in, size_t tam, Quadro* q,
   q->jardimIdx = in[2];
   q->n = in[3];
   if (q->n < 1 || q->n > MAX_REGISTROS) return false;
-  if (tam < CABECALHO + (size_t)q->n * 9) return false;
+  if (tam < CABECALHO + (size_t)q->n * BYTES_REGISTRO) return false;
 
   size_t p = 4;
   q->seqBase = get32(in, p);
@@ -215,8 +221,9 @@ inline bool decodificar(const uint8_t* in, size_t tam, Quadro* q,
     } else {
       r.ts = q->baseTs + dts;
     }
-    if (!cabe(p, 6, tam)) return false;   // nivel, bateria, deltaT(2), estado, tendencia
-    r.nivelCm = in[p++];
+    if (!cabe(p, 7, tam)) return false;   // nivel(2), bateria, deltaT(2), estado, tendencia
+    r.nivelDecimos = get16(in, p);
+    if (r.nivelDecimos > NIVEL_MAX_DECIMOS) return false;
     r.bateria = in[p++];
     if (r.bateria > 100) return false;
     r.deltaT = get16(in, p);

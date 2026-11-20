@@ -210,7 +210,7 @@ static void testarMaiorLinhaCabe() {
   q.bootId = 0xFFFFFFFF;
   q.baseTs = 4102444799u;
   q.n = 1;
-  q.regs[0] = {codec::BOOT, codec::SENSOR_JARDIM, 0xFFFFFFFFu, 4102444799u, 255, 100, 0,
+  q.regs[0] = {codec::BOOT, codec::SENSOR_JARDIM, 0xFFFFFFFFu, 4102444799u, 2550, 100, 0,
                -1234567890, -1234567890, true, codec::ESTADO_MAX, codec::TENDENCIA_MAX};
   char json[TAMANHO_LINHA];
   bool ok = montarJsonGateway(q, 0, false, json, sizeof(json));
@@ -221,7 +221,7 @@ static void testarMaiorLinhaCabe() {
          "boot mais longo termina inteiro (nada truncado)");
 
   q.flags = codec::FLAG_SIMULACAO;
-  q.regs[0] = {codec::EVENTO, 30, 0xFFFFFFFFu, 4102444799u, 255, 100, 0xFFFF, 0, 0, false,
+  q.regs[0] = {codec::EVENTO, 30, 0xFFFFFFFFu, 4102444799u, 2550, 100, 0xFFFF, 0, 0, false,
                codec::ESTADO_MAX, codec::TENDENCIA_MAX};
   ok = montarJsonGateway(q, 0, true, json, sizeof(json));
   checar(ok && std::strlen(json) + 16 < TAMANHO_LINHA, "evento mais longo cabe em TAMANHO_LINHA");

@@ -20,15 +20,15 @@ static void checar(bool cond, const char* nome) {
 
 static bool mesmoRegistro(const codec::Registro& a, const codec::Registro& b) {
   return a.tipo == b.tipo && a.sensor == b.sensor && a.seq == b.seq &&
-         a.ts == b.ts && a.nivelCm == b.nivelCm && a.bateria == b.bateria &&
+         a.ts == b.ts && a.nivelDecimos == b.nivelDecimos && a.bateria == b.bateria &&
          a.deltaT == b.deltaT && a.lat == b.lat && a.lon == b.lon &&
          a.coords == b.coords && a.estado == b.estado && a.tendencia == b.tendencia;
 }
 
 // Quadro minimo: 1 evento, sem gap, sem ts absoluto, sem coordenadas.
 // Layout v2: cabecalho (16, com seqBase de 32 bits) + meta(1) dTs(2) nivel(1)
-// bateria(1) deltaT(2) estado(1) tendencia(1) = 25 bytes; estado em [23] e
-// tendencia em [24].
+// bateria(1) deltaT(2) estado(1) tendencia(1) = 26 bytes (nivel em decimos de cm,
+// 2 bytes); estado em [24] e tendencia em [25].
 static codec::Quadro quadroMinimo(uint8_t estado, uint8_t tendencia) {
   codec::Quadro u{};
   u.flags = codec::FLAG_SIMULACAO;
@@ -36,7 +36,7 @@ static codec::Quadro quadroMinimo(uint8_t estado, uint8_t tendencia) {
   u.bootId = 0x0A0B0C0D;
   u.baseTs = 1790000000;
   u.n = 1;
-  u.regs[0] = {codec::EVENTO, 1, 5, 1790000000, 30, 100, 0, 0, 0, false, estado, tendencia};
+  u.regs[0] = {codec::EVENTO, 1, 5, 1790000000, 300, 100, 0, 0, 0, false, estado, tendencia};
   return u;
 }
 
@@ -44,8 +44,8 @@ static void testarConstantes() {
   checar(codec::VERSAO == 0x02, "versao do quadro = 0x02");
   checar(codec::SEM_CLASSIFICACAO == 0xFF, "sem classificacao = 0xFF");
   checar(codec::CABECALHO == 16, "cabecalho = 16 bytes (seqBase de 32 bits)");
-  checar(codec::MAX_BYTES == 70, "MAX_BYTES = 16 + 6 x 9 = 70");
-  checar(codec::MAX_COM_EXTRAS == 148, "MAX_COM_EXTRAS = 70 + 6 x 13 = 148");
+  checar(codec::MAX_BYTES == 76, "MAX_BYTES = 16 + 6 x 10 = 76");
+  checar(codec::MAX_COM_EXTRAS == 154, "MAX_COM_EXTRAS = 76 + 6 x 13 = 154");
   // O valor no fio e o ordinal dos enums: o codec nao os inclui, entao o teste confere.
   checar(codec::ESTADO_MAX == (uint8_t)EstadoFisico::ALAGADO, "ESTADO_MAX = ultimo EstadoFisico");
   checar(codec::TENDENCIA_MAX == (uint8_t)TendenciaLocal::DESATUALIZADO,
@@ -54,7 +54,7 @@ static void testarConstantes() {
 
 // Registro que nao informa estado/tendencia (linha antiga) nasce "sem classificacao".
 static void testarRegistroAntigo() {
-  codec::Registro r = {codec::EVENTO, 1, 5, 1790000000, 30, 100, 0, 0, 0, false};
+  codec::Registro r = {codec::EVENTO, 1, 5, 1790000000, 300, 100, 0, 0, 0, false};
   checar(r.estado == codec::SEM_CLASSIFICACAO, "registro sem estado nasce com 0xFF");
   checar(r.tendencia == codec::SEM_CLASSIFICACAO, "registro sem tendencia nasce com 0xFF");
 
@@ -62,7 +62,7 @@ static void testarRegistroAntigo() {
   uint8_t buf[codec::MAX_COM_EXTRAS];
   size_t tam = codec::codificar(u, buf, sizeof(buf));
   codec::Quadro d{};
-  checar(tam == 25 && codec::decodificar(buf, tam, &d), "quadro com 0xFF/0xFF codifica e decodifica");
+  checar(tam == 26 && codec::decodificar(buf, tam, &d), "quadro com 0xFF/0xFF codifica e decodifica");
   checar(d.regs[0].estado == codec::SEM_CLASSIFICACAO &&
              d.regs[0].tendencia == codec::SEM_CLASSIFICACAO,
          "0xFF/0xFF volta como 'sem classificacao', sem inventar valor");
@@ -72,9 +72,9 @@ static void testarLayoutDosBytesNovos() {
   codec::Quadro u = quadroMinimo(2, 5);
   uint8_t buf[codec::MAX_COM_EXTRAS];
   size_t tam = codec::codificar(u, buf, sizeof(buf));
-  checar(tam == 25 && tam == codec::tamanho(u), "quadro minimo v2 tem 25 bytes (v1 tinha 21)");
+  checar(tam == 26 && tam == codec::tamanho(u), "quadro minimo v2 tem 26 bytes (v1 tinha 21)");
   checar(buf[0] == 0x02, "primeiro byte do quadro e a versao 0x02");
-  checar(buf[23] == 2 && buf[24] == 5, "estado em [23] e tendencia em [24]");
+  checar(buf[24] == 2 && buf[25] == 5, "estado em [24] e tendencia em [25]");
 }
 
 static void testarValoresInvalidos() {
@@ -82,14 +82,14 @@ static void testarValoresInvalidos() {
   uint8_t buf[codec::MAX_COM_EXTRAS];
   size_t tam = codec::codificar(u, buf, sizeof(buf));
   codec::Quadro d{};
-  checar(tam == 25, "quadro base para corromper");
+  checar(tam == 26, "quadro base para corromper");
 
   const uint8_t ruins[] = {codec::ESTADO_MAX + 1, 0x7F, 0xFE};
   bool ok = true;
   for (uint8_t v : ruins) {
     uint8_t c[codec::MAX_COM_EXTRAS];
     std::memcpy(c, buf, tam);
-    c[23] = v;
+    c[24] = v;
     ok = ok && !codec::decodificar(c, tam, &d);
   }
   checar(ok, "decodificador rejeita estado fora de 0..3 e diferente de 0xFF");
@@ -98,7 +98,7 @@ static void testarValoresInvalidos() {
   for (uint8_t v : {(uint8_t)(codec::TENDENCIA_MAX + 1), (uint8_t)0x7F, (uint8_t)0xFE}) {
     uint8_t c[codec::MAX_COM_EXTRAS];
     std::memcpy(c, buf, tam);
-    c[24] = v;
+    c[25] = v;
     ok = ok && !codec::decodificar(c, tam, &d);
   }
   checar(ok, "decodificador rejeita tendencia fora de 0..5 e diferente de 0xFF");
@@ -107,7 +107,7 @@ static void testarValoresInvalidos() {
          "codificador rejeita estado invalido");
   checar(codec::tamanho(quadroMinimo(0, codec::TENDENCIA_MAX + 1)) == 0,
          "codificador rejeita tendencia invalida");
-  checar(codec::tamanho(quadroMinimo(codec::ESTADO_MAX, codec::TENDENCIA_MAX)) == 25,
+  checar(codec::tamanho(quadroMinimo(codec::ESTADO_MAX, codec::TENDENCIA_MAX)) == 26,
          "extremos validos (3 e 5) sao aceitos");
 }
 
@@ -121,7 +121,7 @@ static void testarSeq32Bits() {
   q.baseTs = 1790000000;
   q.n = 4;
   for (uint8_t i = 0; i < 4; i++) {
-    q.regs[i] = {codec::SNAPSHOT, codec::SENSOR_JARDIM, 65534u + i, 1790000000u + i, 10, 100, 0, 0, 0,
+    q.regs[i] = {codec::SNAPSHOT, codec::SENSOR_JARDIM, 65534u + i, 1790000000u + i, 100, 100, 0, 0, 0,
                  false, 1, 0};
   }
   uint8_t buf[codec::MAX_COM_EXTRAS];
@@ -148,8 +148,8 @@ static void testarSeq32Bits() {
   m.bootId = 1;
   m.baseTs = 1790000000;
   m.n = 2;
-  m.regs[0] = {codec::SNAPSHOT, codec::SENSOR_JARDIM, 0xFFFFFFFEu, 1790000000u, 1, 100, 0, 0, 0, false};
-  m.regs[1] = {codec::SNAPSHOT, codec::SENSOR_JARDIM, 0xFFFFFFFFu, 1790000001u, 1, 100, 0, 0, 0, false};
+  m.regs[0] = {codec::SNAPSHOT, codec::SENSOR_JARDIM, 0xFFFFFFFEu, 1790000000u, 10, 100, 0, 0, 0, false};
+  m.regs[1] = {codec::SNAPSHOT, codec::SENSOR_JARDIM, 0xFFFFFFFFu, 1790000001u, 10, 100, 0, 0, 0, false};
   tam = codec::codificar(m, buf, sizeof(buf));
   checar(tam > 0 && codec::decodificar(buf, tam, &d) && d.seqBase == 0xFFFFFFFEu &&
              d.regs[1].seq == 0xFFFFFFFFu,
@@ -183,9 +183,9 @@ int main() {
   q.regs[0] = {codec::BOOT, codec::SENSOR_JARDIM, 0, 1790000000,
                0, 88, 0, -123456789, 987654321, true, 0, 3};
   q.regs[1] = {codec::EVENTO, 3, 2, 1790000010,
-               42, 87, 100, 0, 0, false, 2, 0};
+               425, 87, 100, 0, 0, false, 2, 0};
   q.regs[2] = {codec::SNAPSHOT, 7, 3, 1790100000,
-               12, 86, 50, 0, 0, false, 3, 2};
+               123, 86, 50, 0, 0, false, 3, 2};
 
   uint8_t buf[codec::MAX_COM_EXTRAS];
   size_t tam = codec::codificar(q, buf, sizeof(buf));
@@ -226,14 +226,14 @@ int main() {
   const uint8_t tendencias[6] = {0, 1, 2, 3, 4, codec::SEM_CLASSIFICACAO};
   for (uint8_t i = 0; i < s.n; i++) {
     s.regs[i] = {codec::SNAPSHOT, 1, (uint32_t)(10 + i),
-                 (uint32_t)(1800000000 + i), (uint8_t)i, 50, 10, 0, 0, false,
+                 (uint32_t)(1800000000 + i), (uint16_t)(i * 10), 50, 10, 0, 0, false,
                  estados[i], tendencias[i]};
   }
   uint8_t buf6[codec::MAX_COM_EXTRAS];
   size_t tam6 = codec::codificar(s, buf6, sizeof(buf6));
   codec::Quadro d6{};
   checar(tam6 == codec::tamanho(s) && tam6 == codec::MAX_BYTES,
-         "6 registros ocupam exatamente MAX_BYTES (70)");
+         "6 registros ocupam exatamente MAX_BYTES (76)");
   checar(codec::decodificar(buf6, tam6, &d6) && d6.n == 6 &&
              d6.regs[5].seq == 15,
          "6 registros decodificam");
@@ -242,7 +242,7 @@ int main() {
   checar(pares, "os 6 pares (estado, tendencia) voltam identicos");
 
   // Pior caso real: 6 boots, todos com ts absoluto e coordenadas, e gap em 5
-  // (o primeiro nao tem gap): 16 + 6x9 + 5 + 6x4 + 6x8 = 147 <= MAX_COM_EXTRAS (148).
+  // (o primeiro nao tem gap): 16 + 6x10 + 5 + 6x4 + 6x8 = 153 <= MAX_COM_EXTRAS (154).
   codec::Quadro w{};
   w.flags = codec::FLAG_SIMULACAO | codec::FLAG_COORDENADAS;
   w.seqBase = 0;
@@ -251,12 +251,12 @@ int main() {
   w.n = codec::MAX_REGISTROS;
   for (uint8_t i = 0; i < w.n; i++) {
     w.regs[i] = {codec::BOOT, codec::SENSOR_JARDIM, (uint32_t)(i * 10),
-                 (uint32_t)(1791000000 + i), 1, 90, 0, 10, 20, true, 1, 1};
+                 (uint32_t)(1791000000 + i), 10, 90, 0, 10, 20, true, 1, 1};
   }
   uint8_t bufw[codec::MAX_COM_EXTRAS];
   size_t tamw = codec::codificar(w, bufw, sizeof(bufw));
-  checar(tamw == 147 && tamw <= codec::MAX_COM_EXTRAS,
-         "pior caso (gap + ts absoluto + coords) = 147 bytes, cabe em MAX_COM_EXTRAS");
+  checar(tamw == 153 && tamw <= codec::MAX_COM_EXTRAS,
+         "pior caso (gap + ts absoluto + coords) = 153 bytes, cabe em MAX_COM_EXTRAS");
 
   // Flags sem coordenadas: boot nao carrega lat/lon.
   codec::Quadro nc = q;
@@ -311,6 +311,21 @@ int main() {
   inv = q;
   inv.n = 0;
   checar(codec::tamanho(inv) == 0, "rejeita n=0 no tamanho");
+
+  // Nivel em decimos de cm: a casa decimal sobrevive (regressao do review: 42,5 virava 43).
+  checar(d.regs[1].nivelDecimos == 425 && d.regs[2].nivelDecimos == 123,
+         "nivel 42,5 e 12,3 cm voltam identicos em decimos de cm");
+  inv = q;
+  inv.regs[1].nivelDecimos = codec::NIVEL_MAX_DECIMOS;
+  checar(codec::tamanho(inv) != 0, "nivel no limite (255,0 cm) e aceito");
+  inv.regs[1].nivelDecimos = codec::NIVEL_MAX_DECIMOS + 1;
+  checar(codec::tamanho(inv) == 0, "codificador rejeita nivel acima de 255,0 cm");
+  std::memcpy(ruim, buf, tam);
+  // Registro 1 comeca depois do cabecalho (16) e do registro 0 (10 + 8 coords).
+  // meta(1) [gap(1)] dTs(2) -> o nivel do registro 1 fica em 16 + 18 + 1 + 1 + 2 = 38.
+  ruim[38] = 0xFF;
+  ruim[39] = 0xFF;
+  checar(!codec::decodificar(ruim, tam, &d), "decodificador rejeita nivel acima do limite (0xFFFF)");
 
   uint8_t pequeno[codec::MAX_COM_EXTRAS];
   checar(codec::codificar(q, pequeno, tam - 1) == 0,
