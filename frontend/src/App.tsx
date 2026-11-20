@@ -89,13 +89,11 @@ function App() {
   const [buscaAberta, setBuscaAberta] = useState(false)
   const areaBuscaRef = useRef<HTMLDivElement>(null)
 
-  const { jardim, alerta, cop, loading, error, refetch } = useJardimData(
-    jardimSelecionado,
-    {
+  const { jardim, historico, alerta, cop, loading, error, refetch } =
+    useJardimData(jardimSelecionado, {
       intervaloPollingMs: 5000,
       limiteHistorico: 30,
-    },
-  )
+    })
 
   const {
     itens: itensRede,
@@ -322,7 +320,8 @@ function App() {
             <div className="mt-6">
               <HistoricoChart
                 jardimId={jardimSelecionado}
-                loading={loading && !jardim}
+                historico={historico}
+                loading={loading && historico.length === 0}
                 corDestaque={corDestaqueDoGrafico(alerta?.cor, temaEscuro)}
               />
             </div>

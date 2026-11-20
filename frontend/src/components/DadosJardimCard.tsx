@@ -1,5 +1,5 @@
 import { Battery, CalendarDays, Clock3, Droplets } from 'lucide-react'
-import { formatarDataHora } from '../types/jardim'
+import { formatarDataHora, NIVEL_MAXIMO_JARDIM_CM } from '../types/jardim'
 import type { JardimResponse } from '../types/jardim'
 
 interface DadosJardimCardProps {
@@ -9,10 +9,10 @@ interface DadosJardimCardProps {
 }
 
 /**
- * Escala exibida no card conforme a referência visual (limite de 1 m).
+ * Escala do card: a mesma capacidade usada pela API e pelo simulador (50 cm).
  * Os limiares de alerta continuam vindo dos tipos compartilhados.
  */
-const LIMITE_EXIBIDO_CM = 100
+const LIMITE_EXIBIDO_CM = NIVEL_MAXIMO_JARDIM_CM
 
 function formatarDecimal(valor: number, casas: number): string {
   return valor.toLocaleString('pt-BR', {
@@ -149,7 +149,9 @@ export default function DadosJardimCard({
             />
             <div className="mt-2 flex items-center justify-between text-xs text-[var(--cor-texto-suave)]">
               <span>0 cm</span>
-              <span className="font-medium text-[var(--cor-texto)]">1 m (limite)</span>
+              <span className="font-medium text-[var(--cor-texto)]">
+                {LIMITE_EXIBIDO_CM} cm (limite)
+              </span>
             </div>
           </div>
         </div>
