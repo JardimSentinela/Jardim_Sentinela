@@ -18,7 +18,9 @@
 #endif
 
 // ===== CONFIGURACAO ==========================================================
-constexpr const char* JARDIM_ID = "jardim-centro-01";  // Conforme contrato de telemetria
+// Id do jardim: constante unica (decisoes-tecnicas §6.1, regex ^J\d{2}$). Linhas
+// antigas, gravadas com "jardim-centro-01", saem com este id no envio.
+constexpr const char* JARDIM_ID = "J01";
 
 // Sensores resistivos T1592 em ordem CRESCENTE de altura (indice 0 = mais baixo).
 // Wokwi: 3 potenciometros em GPIO32, GPIO33, GPIO34 com alimentacao em GPIO25, GPIO26, GPIO27.
@@ -91,8 +93,10 @@ constexpr const char* NVS_ESPACO    = "envio";
 constexpr const char* NVS_ACK_BOOT  = "ackBoot";
 constexpr const char* NVS_ACK_SEQ   = "ackSeq";
 
-// Buffer da linha JSON: a linha mais longa e a de boot (~236 bytes com origem).
-constexpr size_t   TAMANHO_LINHA         = 320;
+// Buffer da linha JSON. A linha mais longa e a de boot com todos os campos
+// (~249 bytes) mais estado, tendenciaDispositivo e versaoRegra (~102 bytes):
+// 351 bytes no pior caso. 320 truncaria (ou recusaria) essa linha.
+constexpr size_t   TAMANHO_LINHA         = 384;
 
 // ===== NOMES DOS CAMPOS JSON ================================================
 // Centralizados aqui de proposito: se a equipe mudar o nome de um campo no
@@ -110,6 +114,10 @@ constexpr const char* CAMPO_HORA_SINC        = "horaSincronizada";
 constexpr const char* CAMPO_LAT              = "lat";
 constexpr const char* CAMPO_LON              = "lon";
 constexpr const char* CAMPO_ORIGEM           = "origem";
+// Campos v2 (decisoes-tecnicas §6.3): opcionais. Linhas antigas nao os tem.
+constexpr const char* CAMPO_ESTADO           = "estado";
+constexpr const char* CAMPO_TENDENCIA        = "tendenciaDispositivo";
+constexpr const char* CAMPO_VERSAO_REGRA     = "versaoRegra";
 
 // Valores textuais dos campos.
 constexpr const char* TIPO_EVENTO            = "evento";    // mudanca de patamar

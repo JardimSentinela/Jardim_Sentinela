@@ -6,19 +6,7 @@
 #include <time.h>
 
 #include "config.h"
-
-// Tipo do registro gravado no arquivo.
-enum TipoRegistro : uint8_t { REG_EVENTO = 0, REG_SNAPSHOT = 1, REG_BOOT = 2 };
-
-struct Evento {
-  TipoRegistro tipo;
-  uint8_t  sensor;
-  float    nivelAgua;
-  uint32_t deltaTMs;
-  uint32_t tMs;
-  uint32_t seq;           // atribuido na criacao do registro (deixa buraco se perder)
-  bool     relogioValido; // estado do relogio no momento em que o registro nasceu
-};
+#include "evento.h"   // TipoRegistro e Evento
 
 // Contadores do envio (comando 'i'). "pendentes" e derivado do arquivo; os
 // demais so passam a ser incrementados quando o transporte real existir.
@@ -28,6 +16,7 @@ struct ContadoresEnvio {
   uint32_t falhas;
   uint32_t dizimados;   // snapshots de backfill descartados pela politica (INC 7B)
   uint32_t perdidos;    // nao confirmados removidos pela compactacao (INC 8A)
+  uint32_t rejeitadosVersao;  // quadros rejeitados pela versao do codec (v2)
 };
 
 // Estado do Wi-Fi, avancado por atualizarWifi() no loop (nunca bloqueia).
@@ -42,6 +31,11 @@ struct ChaveResolvida { char boot[9]; uint32_t seq; };
 
 extern QueueHandle_t filaEventos;
 extern std::atomic<uint32_t> descartados;
+
+// Publicado pela tarefa de amostragem, lido pelo loop (totem): ordinais de
+// EstadoFisico e de TendenciaLocal; 0xFF = sem leitura da sonda ainda.
+extern std::atomic<uint8_t> g_estadoTotem;
+extern std::atomic<uint8_t> g_tendenciaTotem;
 extern ContadoresEnvio g_envio;
 
 extern EstadoWifi g_wifi;

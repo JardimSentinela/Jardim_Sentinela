@@ -47,8 +47,14 @@ Um objeto JSON por leitura. Firmware e simulador enviam o **mesmo payload** ao
 | `bateria`                    | —                   | number (inteiro) | escala 0-100 (%) | sim         | inteiro entre 0 e 100     | `87`                     |
 | `timestamp`                  | —                   | string           | ISO-8601 em UTC  | **não**     | data/hora ISO-8601 válida | `"2026-11-12T12:00:00Z"` |
 
-- Campos desconhecidos (`tipo`, `seq`, `bootId`, `deltaTMs`, `horaSincronizada`,
-  `lat`, `lon`) são **aceitos e descartados** (ver 3.3).
+- Campos opcionais [SCRUM-28][SW-14]: `tipo` (`evento`|`snapshot`|`boot`), `bootId`
+  (8 hex) e `seq` (inteiro >= 0, até 4294967295). São validados quando presentes e
+  guardados (não aparecem nas respostas). `tipo: "boot"` não entra na tendência nem no
+  estado. `bootId`+`seq` identificam a leitura (idempotência); sem eles vale
+  `jardimId + sensorId + timestamp`, como antes. Registros sem esses campos (simulador,
+  antigos) continuam aceitos e elegíveis.
+- Campos desconhecidos (`deltaTMs`, `horaSincronizada`, `lat`, `lon`) são **aceitos e
+  descartados** (ver 3.3).
 - O **nome oficial** do campo (`idJardim` × `jardimId`, etc.) não está fechado
   (ver 3.1). Enquanto isso, os dois nomes valem.
 
@@ -114,9 +120,10 @@ Formato do corpo de erro (400 e 404 de jardim): `status`, `erro`, `mensagem`,
 (`^S\d{2}$`)**, mais o valor reservado `idSensor: "jardim"` para a unidade inteira
 (snapshots e `boot`). Detalhes em `docs/dicionario-de-dados.md`. A API **não valida**
 esse formato hoje (só exige não vazio): a validação será ligada **depois** que o
-firmware migrar, para não rejeitá-lo. Os exemplos legados `jardim-centro-01` /
-`sensor-01` ainda existem na configuração do firmware (`esp32/`) e na seção 2
-abaixo — são **legado a migrar**, não padrão.
+firmware migrar, para não rejeitá-lo. O firmware já envia `idJardim: "J01"`
+(constante `JARDIM_ID`); os ids de sensor `sensor-01`..`sensor-04` (legado, não
+`S01`..`S04`) seguem como estão e ainda precisam migrar: **legado a migrar**, não
+padrão. A migração dos sensores é do time de hardware (dicionário, seção 6).
 
 ---
 
@@ -131,8 +138,8 @@ abaixo — são **legado a migrar**, não padrão.
 | Campo             | Tipo            | Unidade          | Presente em                        | Descrição                                                                    |
 | ----------------- | --------------- | ---------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
 | `tipo`            | string          | —                | **todas**                          | `"evento"` (mudança de patamar), `"snapshot"` (heartbeat periódico), `"boot"` (primeira linha do boot) |
-| `idJardim`        | string          | —                | **todas**                          | Identificador do jardim (`jardim-centro-01`)                                  |
-| `idSensor`        | string          | —                | **todas**                          | `sensor-01`..`sensor-03` nos **eventos**; `jardim` nos **snapshots** e na linha de **boot** (esses dois representam a unidade inteira) |
+| `idJardim`        | string          | —                | **todas**                          | Identificador do jardim (`J01`, constante `JARDIM_ID`; antes `jardim-centro-01`) |
+| `idSensor`        | string          | —                | **todas**                          | `sensor-01`..`sensor-03` (T1592) e `sensor-04` (sonda HW-02) nos **eventos**; `jardim` nos **snapshots** e na linha de **boot** (esses dois representam a unidade inteira) |
 | `nivelAgua`       | number (1 casa) | centímetros       | **todas**                          | Nível atual do nível mais alto molhado (`0.0` quando nada está molhado)        |
 | `bateria`         | number (int)    | escala 0-100     | **todas**                          | Carga da bateria — hoje é um valor **constante** (`100`); não há sensor de bateria no firmware |
 | `timestamp`       | string          | ISO-8601 em UTC  | **todas**                          | Instante do **evento** (não o da gravação). Ver §2.3                            |
@@ -141,34 +148,42 @@ abaixo — são **legado a migrar**, não padrão.
 | `deltaTMs`        | number (int)    | milissegundos    | **só evento de SUBIDA de nível**   | Tempo entre patamares. **Omitido** nas quedas e nos snapshots/boot, para economizar bytes |
 | `lat` / `lon`     | number (6 casas)| graus            | **só a linha de boot** (simulação)  | Coordenadas configuradas do jardim. **PLACEHOLDER** (`0.0`) — valor configurado, não medido; a equipe define o valor real |
 | `horaSincronizada`| boolean         | —                | **todas**                          | `true` se o relógio estava sincronizado (NTP) quando o registro nasceu; `false` enquanto o horário é **estimado** |
+| `estado`          | string          | —                | **só registros com classificação** | Estado físico da sonda: `NORMAL`, `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`. Faixas e histerese **provisórias** (`esp32/src/modulos/estado_fisico.h`). Omitido em registro sem classificação (ex.: eventos T1592) |
+| `tendenciaDispositivo` | string     | —                | **só registros com classificação** | Tendência calculada pelo firmware (`SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`, `INDETERMINADO`, `DESATUALIZADO`). Só auditoria na API |
+| `versaoRegra`     | string          | —                | **junto com `estado` ou `tendenciaDispositivo`** | Versão da regra que classificou (`v1-provisoria-2026-11`) |
 
 ### 2.2 Exemplos reais (gerados na simulação)
 
 Linha de **boot** (primeira do arquivo, `seq 0`):
 
 ```json
-{"tipo":"boot","idJardim":"jardim-centro-01","idSensor":"jardim","nivelAgua":0.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":0,"bootId":"00000032","lat":0.000000,"lon":0.000000,"horaSincronizada":false}
+{"tipo":"boot","idJardim":"J01","idSensor":"jardim","nivelAgua":0.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":0,"bootId":"00000032","lat":0.000000,"lon":0.000000,"horaSincronizada":false}
 ```
 
 Linha de **snapshot** (heartbeat periódico):
 
 ```json
-{"tipo":"snapshot","idJardim":"jardim-centro-01","idSensor":"jardim","nivelAgua":0.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":1,"bootId":"00000032","horaSincronizada":false}
+{"tipo":"snapshot","idJardim":"J01","idSensor":"jardim","nivelAgua":0.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":1,"bootId":"00000032","horaSincronizada":false}
 ```
 
 Linha de **evento** (mudança de patamar, sem subida):
 
 ```json
-{"tipo":"evento","idJardim":"jardim-centro-01","idSensor":"sensor-01","nivelAgua":5.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":2,"bootId":"00000032","horaSincronizada":false}
+{"tipo":"evento","idJardim":"J01","idSensor":"sensor-01","nivelAgua":5.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":2,"bootId":"00000032","horaSincronizada":false}
 ```
 
 Linha de **evento** (subida de nível — única com `deltaTMs`):
 
 ```json
-{"tipo":"evento","idJardim":"jardim-centro-01","idSensor":"sensor-02","nivelAgua":10.0,"bateria":100,"timestamp":"2026-10-15T00:00:01Z","seq":5,"bootId":"00000032","deltaTMs":100,"horaSincronizada":false}
+{"tipo":"evento","idJardim":"J01","idSensor":"sensor-02","nivelAgua":10.0,"bateria":100,"timestamp":"2026-10-15T00:00:01Z","seq":5,"bootId":"00000032","deltaTMs":100,"horaSincronizada":false}
 ```
 
-Tamanhos médios: evento **189 B**, snapshot **188 B**, boot **214 B** (incluindo o LF).
+Tamanhos médios: evento **189 B**, snapshot **188 B**, boot **214 B** (incluindo o LF), medidos
+antes de `estado`, `tendenciaDispositivo` e `versaoRegra` (+~100 B quando presentes). A linha mais
+longa (boot com todos os campos e `seq` de 32 bits) mede 328 B; o buffer é de 384 B.
+
+O **nível** (`nivelAgua`) chega à API com a mesma casa decimal gravada na linha: o quadro v2 do
+envio local carrega o nível em décimos de cm (42,5 cm = 425), sem arredondar para inteiro.
 
 ### 2.3 Hora do registro: `timestamp` e `horaSincronizada`
 
@@ -225,8 +240,8 @@ Consequências para quem lê:
 | 2026-11-14 | Ids no padrão `J01` / `S01`                                                                   | decidido (a comunicar ao time) |
 | 2026-11-14 | Medição = `nivelAgua` em cm, por ora                                                          | decidido (a comunicar ao time) |
 | 2026-11-14 | Nome oficial de id/sensor/nível: **manter a ponte** (dois nomes aceitos na requisição) e reavaliar depois da Sprint 3 (ver 3.1) | decidido (a comunicar ao time) |
-| 2026-11-14 | Histórico e estado atual ordenam por `timestampDispositivo`, com `recebidoEm` quando for nulo (opção B, ver 3.4) | decidido; **implementação pendente** |
-| 2026-11-14 | Formato do id definido (`J01`, `S01`, `jardim`); **validação na API só depois** da migração do firmware (ver 1.6) | decidido; **implementação pendente** |
+| 2026-11-14 | Histórico e estado atual ordenam por `timestampDispositivo`, com `recebidoEm` quando for nulo (opção B, ver 3.4) | decidido; implementado (SW-11) |
+| 2026-11-14 | Formato do id definido (`J01`, `S01`, `jardim`); **validação na API só depois** da migração do firmware (ver 1.6) | decidido; implementado (SW-11) |
 | 2026-11-14 | Em payloads novos de requisição, usar `idJardim`/`idSensor`/`nivelAgua`/`timestamp` (ver dicionário, regra 4) | decidido (a comunicar ao time) |
 
 ### 3.1 Nomes de campo: firmware × nome interno da API — ponte mantida por ora
@@ -250,7 +265,11 @@ ser **confirmado com o time de hardware**.
 
 ### 3.3 Campos do firmware que a API ignora
 
-`tipo`, `seq`, `bootId`, `deltaTMs`, `horaSincronizada`, `lat` e `lon` são
+> **Atualização [SCRUM-28][SW-14]:** `tipo`, `bootId` e `seq` passaram a ser lidos
+> (ver 1.1). Falta decidir a detecção de **perda** (buraco em `seq`) e o uso de
+> `horaSincronizada`. O texto abaixo vale para o que continua ignorado.
+
+`tipo`, `seq`, `bootId`, `deltaTMs`, `horaSincronizada`, `lat` e `lon` eram
 desconhecidos para o DTO e **ignorados em silêncio** (o Jackson 3 do Spring
 Boot 4 desliga `FAIL_ON_UNKNOWN_PROPERTIES` por padrão): o dado é aceito e
 descartado. `bootId`/`seq` agora existem em `develop` (a PR #14 foi mergeada).
@@ -261,13 +280,14 @@ Falta decidir se a API passa a **usar** esses campos para:
 - distinguir `evento`, `snapshot` e `boot`;
 - confiar no `timestamp` do dispositivo só quando `horaSincronizada` for `true`.
 
-Hoje a idempotência usa `idJardim` + `idSensor` + `timestamp` (1.4).
+Atualizado [SCRUM-28][SW-14]: com `bootId` e `seq` a idempotência usa `idJardim` + `bootId` + `seq`;
+sem eles, `idJardim` + `idSensor` + `timestamp` (1.4).
 
-### 3.4 Qual hora manda — decidido: opção B (implementação pendente)
+### 3.4 Qual hora manda — decidido e implementado: opção B
 
 Cada leitura tem duas horas: `timestampDispositivo` (quando o sensor mediu) e
-`recebidoEm` (quando a API recebeu). **Hoje o histórico e o "estado atual"
-ordenam por `recebidoEm`.** Com o dispositivo offline, o firmware reenvia a fila
+`recebidoEm` (quando a API recebeu). **Antes da SW-11, o histórico e o
+"estado atual" ordenavam por `recebidoEm`.** Com o dispositivo offline, o firmware reenvia a fila
 de uma vez; segundo os comentários de `esp32/src/modulos/drenagem.cpp`, a
 drenagem envia o snapshot mais recente (âncora) e depois os eventos mais antigos.
 Nesse caso:
@@ -282,9 +302,8 @@ Nesse caso:
 | C     | A API devolve as duas; o dashboard escolhe                       | Empurra a decisão para o front                     |
 
 **Decisão (2026-11-14): opção B.** Histórico e "estado atual" passam a ordenar
-por `timestampDispositivo`, usando `recebidoEm` quando ele for nulo. **Isso ainda
-não está implementado:** hoje a API ordena por `recebidoEm`. A mudança altera o
-comportamento do SW-06/SW-07 e deve começar por teste. Em aberto: tratar
+por `timestampDispositivo`, usando `recebidoEm` quando ele for nulo. **Implementado
+na SW-11** (histórico, estado atual e tendência ordenam pela mesma chave). Em aberto: tratar
 `horaSincronizada:false` (hora estimada) como hora não confiável.
 
 ---

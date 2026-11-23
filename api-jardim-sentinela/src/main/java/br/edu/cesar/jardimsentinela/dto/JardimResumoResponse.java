@@ -15,13 +15,18 @@ public record JardimResumoResponse(
 ) {
 
     public static JardimResumoResponse de(Leitura ultima, long totalLeituras) {
+        return de(ultima, totalLeituras, ultima.getEstado());
+    }
+
+    /** {@code estado}: último estado válido do jardim (ver JardimService#listarJardins). */
+    public static JardimResumoResponse de(Leitura ultima, long totalLeituras, String estado) {
         Instant chave = ultima.getTimestampDispositivo() != null
                 ? ultima.getTimestampDispositivo()
                 : ultima.getRecebidoEm();
         return new JardimResumoResponse(
                 ultima.getJardimId(),
                 ultima.getNivelCm(),
-                ultima.getEstado(),
+                estado,
                 chave,
                 totalLeituras);
     }

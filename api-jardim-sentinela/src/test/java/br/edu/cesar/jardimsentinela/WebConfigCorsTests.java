@@ -50,6 +50,27 @@ class WebConfigCorsTests {
                 .andExpect(header().exists(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS));
     }
 
+    // [SCRUM-20][SW-11] Headers permitidos explícitos (sem "*"): só os que o dashboard usa.
+
+    @Test
+    void preflightLiberaApenasContentTypeEAccept() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type, accept"))
+                .andExpect(status().isOk())
+                .andExpect(header().exists(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS));
+    }
+
+    @Test
+    void preflightComHeaderNaoListadoERecusado() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "x-qualquer-coisa"))
+                .andExpect(status().isForbidden());
+    }
+
     // [SCRUM-20][SW-11] Lista fechada de origens (decisões §6.6), sem "*".
 
     @Test

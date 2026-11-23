@@ -24,9 +24,45 @@ public interface LeituraRepository extends JpaRepository<Leitura, Long> {
             """)
     List<Leitura> findHistorico(@Param("jardimId") String jardimId, Pageable pageable);
 
-    /** [SCRUM-20][SW-11] Jardins que já enviaram ao menos uma leitura, em ordem de id. */
-    @Query("select distinct l.jardimId from Leitura l order by l.jardimId")
-    List<String> findJardimIdsComLeitura();
+    /**
+     * [SCRUM-20][SW-11] Leitura mais recente de cada jardim numa única query (sem N+1), pela mesma
+     * chave de {@link #findHistorico}: COALESCE(timestampDispositivo, recebidoEm), desempate por id.
+     * Ordenada por jardimId. Jardim sem leitura não aparece.
+     */
+    @Query("""
+            select l from Leitura l
+            where not exists (
+                select 1 from Leitura o
+                where o.jardimId = l.jardimId
+                  and (coalesce(o.timestampDispositivo, o.recebidoEm) > coalesce(l.timestampDispositivo, l.recebidoEm)
+                       or (coalesce(o.timestampDispositivo, o.recebidoEm) = coalesce(l.timestampDispositivo, l.recebidoEm)
+                           and o.id > l.id)))
+            order by l.jardimId
+            """)
+    List<Leitura> findUltimaLeituraDeCadaJardim();
+
+    /**
+     * [SCRUM-28][SW-14] Último estado válido de cada jardim (mesma regra de
+     * {@link #findComEstadoElegivel}: elegível, com estado, recebido desde {@code recebidoDesde}),
+     * numa única query para a lista não voltar ao N+1.
+     */
+    @Query("""
+            select l from Leitura l
+            where l.estado is not null and (l.tipo is null or l.tipo <> 'boot')
+              and l.recebidoEm >= :recebidoDesde
+              and not exists (
+                select 1 from Leitura o
+                where o.jardimId = l.jardimId and o.estado is not null
+                  and (o.tipo is null or o.tipo <> 'boot') and o.recebidoEm >= :recebidoDesde
+                  and (coalesce(o.timestampDispositivo, o.recebidoEm) > coalesce(l.timestampDispositivo, l.recebidoEm)
+                       or (coalesce(o.timestampDispositivo, o.recebidoEm) = coalesce(l.timestampDispositivo, l.recebidoEm)
+                           and o.id > l.id)))
+            """)
+    List<Leitura> findUltimoEstadoValidoDeCadaJardim(@Param("recebidoDesde") Instant recebidoDesde);
+
+    /** [SCRUM-20][SW-11] Total de leituras por jardim (linhas {jardimId, total}) numa única query. */
+    @Query("select l.jardimId, count(l) from Leitura l group by l.jardimId")
+    List<Object[]> contarLeiturasPorJardim();
 
     boolean existsByJardimId(String jardimId);
 
@@ -49,18 +85,45 @@ public interface LeituraRepository extends JpaRepository<Leitura, Long> {
     String CHAVE_CRONOLOGICA = "coalesce(l.timestampDispositivo, l.recebidoEm)";
 
     /**
+     * [SCRUM-28][SW-14] Elegibilidade para tendência e estado: o registro de inicialização
+     * (tipo "boot") traz nível fictício e não é medição. Registros sem tipo (antigos,
+     * simulador) continuam elegíveis.
+     */
+    String ELEGIVEL = "(l.tipo is null or l.tipo <> 'boot')";
+
+    /**
      * [SCRUM-28][SW-14] Leituras do jardim da mais recente para a mais antiga pela chave
-     * cronológica, em páginas. Consulta própria da SW-14; a SW-06 e a SW-07 continuam
-     * ordenando por recebidoEm (divergência temporária documentada em
-     * docs/tendencia-nivel.md, seção 12).
+     * cronológica, em páginas. Consulta própria da SW-14: difere de {@link #findHistorico}
+     * só pela elegibilidade (exclui o registro de inicialização). A ordenação é a mesma
+     * (a SW-11 alinhou o histórico à chave cronológica; ver docs/tendencia-nivel.md, seção 12).
      *
      * O desempate por id existe só para a paginação ser determinística: sem uma ordem
      * total, o banco poderia repetir ou omitir linhas empatadas entre páginas. Não é
      * ordem temporal: a calculadora não recebe o id e trata os empates como conjunto de
      * possibilidades (A3).
      */
-    @Query("select l from Leitura l where l.jardimId = :jardimId"
+    @Query("select l from Leitura l where l.jardimId = :jardimId and " + ELEGIVEL
             + " order by " + CHAVE_CRONOLOGICA + " desc, l.id desc")
     List<Leitura> findHistoricoPorChaveCronologica(@Param("jardimId") String jardimId,
             Pageable pageable);
+
+    /**
+     * [SCRUM-28][SW-14] Leituras elegíveis com estado informado, da mais recente para a mais
+     * antiga. A primeira é o "último estado válido" do jardim (o registro mais recente pode
+     * ser um evento de T1592, sem estado). O boot não conta: seu estado vem de um nível fictício.
+     * Só vale se recebido a partir de {@code recebidoDesde} (agora - idade máxima): um estado
+     * antigo não pode aparecer como atual quando a sonda para de informar.
+     */
+    @Query("select l from Leitura l where l.jardimId = :jardimId and l.estado is not null and " + ELEGIVEL
+            + " and l.recebidoEm >= :recebidoDesde"
+            + " order by " + CHAVE_CRONOLOGICA + " desc, l.id desc")
+    List<Leitura> findComEstadoElegivel(@Param("jardimId") String jardimId,
+            @Param("recebidoDesde") Instant recebidoDesde, Pageable pageable);
+
+    /**
+     * [SCRUM-28][SW-14] Identificação da leitura pelo firmware: bootId + seq (único por registro
+     * dentro de um boot; o bootId muda a cada reinício). Base da idempotência quando a origem
+     * envia os dois, no lugar do timestamp, que pode repetir entre reinícios.
+     */
+    Optional<Leitura> findByJardimIdAndBootIdAndSeq(String jardimId, String bootId, Long seq);
 }

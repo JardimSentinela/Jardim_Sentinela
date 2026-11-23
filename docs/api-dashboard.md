@@ -10,7 +10,7 @@ que o código gerado (ou qualquer mock) pode usar hoje, em `develop`.
 
 ## CORS
 
-Liberado para `/api/**`, métodos `GET`/`POST`, qualquer header, **somente para
+Liberado para `/api/**`, métodos `GET`/`POST`, os headers `Content-Type` e `Accept`, **somente para
 uma lista fechada de origens**: `http://localhost:5173` (dev do Vite) e
 `http://localhost:4173` (preview do build). Origem fora da lista não recebe
 `Access-Control-Allow-Origin` (o navegador bloqueia a leitura; o preflight
@@ -20,6 +20,14 @@ A lista vem da propriedade `jardimsentinela.cors.allowed-origins`
 (`application.properties`), separada por vírgula. Quando houver deploy do
 dashboard, acrescentar a URL dele nessa propriedade (ver `config/WebConfig.java`
 e `docs/decisoes-tecnicas.md` §6.6).
+
+## Pendências conhecidas (dívida técnica, fora do escopo da SW-11)
+
+- `GET /teste` continua exposto (herdado; usado por `scripts/smoke-test-integracao.sh`
+  e `docs/validacao-wokwi.md`). Remover ou restringir exige ajustar esses dois usos
+  e é decisão da equipe.
+- Log de SQL: `spring.jpa.show-sql` vem **desligado**; para depurar localmente use
+  `SPRING_JPA_SHOW_SQL=true`.
 
 ## Ordenação (leitura mais recente)
 
@@ -36,6 +44,9 @@ ordem em que o evento aconteceu, não na ordem em que chegaram. Por isso
 Um item por jardim que já enviou ao menos uma leitura, ordenado por `jardimId`.
 Jardim sem leitura **não aparece** (sem dados, a resposta é `[]`, status 200).
 Cada item traz a leitura mais recente segundo a chave de ordenação acima.
+A lista é montada com 2 queries fixas (última leitura por jardim + contagem
+agrupada), independentemente do número de jardins (coberto por
+`ListaJardinsQueriesTests`).
 
 ```bash
 curl http://localhost:8080/api/jardins
@@ -75,9 +86,18 @@ curl http://localhost:8080/api/jardins/J01
 }
 ```
 
-- `estado`: vem do registro mais recente, como o dispositivo enviou (`NORMAL`,
-  `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`). A API **não recalcula**. É `null`
-  em registros antigos, sem classificação.
+- `estado`: vem do **último registro elegível que informou estado**, como o dispositivo
+  enviou (`NORMAL`, `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`). A API **não recalcula**.
+  Se o registro mais recente for um evento de T1592 (sem estado), usa-se o estado
+  anterior, **mas só se recebido dentro da idade máxima da tendência** (180 s por padrão;
+  15 s na simulação): um estado antigo nunca aparece como atual quando a sonda para de
+  informar. O registro de inicialização (`tipo: "boot"`) nunca fornece estado (nível
+  fictício). É `null` se nenhum registro elegível recente trouxe estado. Se o próprio registro
+  mais recente traz estado, ele vale como sempre valeu; a defasagem aparece em
+  `ultimaLeituraEm` e em `tendencia: "DESATUALIZADO"`.
+  `nivelCm`, `ultimaLeituraEm` e `totalLeituras` continuam sendo do registro mais recente,
+  inclusive um `boot`. A lista `GET /api/jardins` usa a mesma regra de estado (último estado
+  válido, dentro da idade máxima, sem `boot`), com 3 queries fixas.
 - `tendencia`: calculada pela API (SW-14), com a **mesma regra** de
   `GET /api/jardins/{id}/tendencia`: `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`,
   `INDETERMINADO` ou `DESATUALIZADO`. No exemplo, a única leitura é menos que as 5 da
@@ -182,11 +202,13 @@ inválidas, responde 200 (`INSUFICIENTE`).
   **nunca** exibir como "dado atual".
 - `confiabilidadeCronologia: "NAO_VALIDADA"`: a ordem das leituras usa o
   `timestampDispositivo` (ou o `recebidoEm` se faltar), mas a API ainda não persiste
-  `bootId`, `seq` e `horaSincronizada`, então não consegue validar a cronologia (um
+  `horaSincronizada` nem a ordem entre boots (`bootId` é aleatório), então não consegue
+  validar a cronologia (um
   reinício do ESP32 pode inverter a ordem real). Os sinais informativos **não** provam
   confiabilidade.
-- A ordem da tendência (pelo horário da medição) **pode divergir** da de
-  `GET /api/jardins/{id}/leituras` (por `recebidoEm`) até as duas serem unificadas.
+- A tendência e `GET /api/jardins/{id}/leituras` usam a mesma ordem (pelo horário da
+  medição, com `recebidoEm` quando faltar). A tendência, porém, ignora registros de
+  inicialização (`boot`), que o histórico lista.
 - Trate valores de `tendencia` desconhecidos de forma segura: novos estados podem surgir.
 
 **Configuração** (sem alterar código; `application.properties`):

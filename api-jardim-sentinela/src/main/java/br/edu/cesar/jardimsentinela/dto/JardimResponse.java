@@ -17,7 +17,8 @@ public record JardimResponse(
         String tendencia
 ) {
 
-    public static JardimResponse de(Leitura ultima, long totalLeituras, String tendencia) {
+    /** {@code estado}: último estado válido do jardim (ver LeituraRepository#findComEstadoElegivel). */
+    public static JardimResponse de(Leitura ultima, long totalLeituras, String estado, String tendencia) {
         return new JardimResponse(
                 ultima.getJardimId(),
                 ultima.getSensorId(),
@@ -25,7 +26,7 @@ public record JardimResponse(
                 ultima.getBateria(),
                 ultima.getTimestampDispositivo() != null ? ultima.getTimestampDispositivo() : ultima.getRecebidoEm(),
                 totalLeituras,
-                ultima.getEstado(),
+                estado,
                 tendencia);
     }
 }

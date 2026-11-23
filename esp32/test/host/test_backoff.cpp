@@ -94,6 +94,15 @@ int main() {
   checar(std::strcmp(g_ultimoErro, "codec: linha invalida") == 0,
          "codec invalido -> erro visivel");
 
+  // Quadro rejeitado pela versao do codec: o motivo ja foi gravado em
+  // g_ultimoErro por contarRejeicaoQuadro e nao pode ser sobrescrito.
+  resetar();
+  std::snprintf(g_ultimoErro, sizeof(g_ultimoErro), "quadro: versao 0x01");
+  agendarNovaTentativa(-5);
+  checar(espera(60000), "quadro rejeitado por versao -> 60 s");
+  checar(std::strcmp(g_ultimoErro, "quadro: versao 0x01") == 0,
+         "quadro rejeitado por versao -> mantem o erro de versao");
+
   resetar();
   agendarNovaTentativa(-1);
   checar(espera(2000), "timeout/rede -> 2 s");
