@@ -2,12 +2,22 @@ package br.edu.cesar.jardimsentinela.entity;
 
 import java.time.Instant;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
+/**
+ * [SCRUM-28][SW-14] A identidade de uma leitura do firmware é (jardimId, bootId, seq): o banco
+ * impede duplicata mesmo com requisições simultâneas. Nulos (registros antigos, simulador)
+ * não colidem entre si.
+ */
 @Entity
+@Table(uniqueConstraints = @UniqueConstraint(columnNames = {"jardimId", "bootId", "seq"}))
 public class Leitura {
 
     @Id
@@ -38,6 +48,18 @@ public class Leitura {
     /** [SCRUM-20][SW-11] Versão da regra que gerou estado/tendência. */
     private String versaoRegra;
 
+    /** Tipo de registro do firmware: "evento", "snapshot" ou "boot". Nulo em registros antigos e no simulador. */
+    private String tipo;
+
+    /** Identificador do boot do firmware (8 hex, em maiúsculas). Nulo quando a origem não o envia. */
+    private String bootId;
+
+    /** Contador do registro dentro do boot. Com bootId, identifica a leitura. Nulo quando não enviado. */
+    private Long seq;
+
+    /** Valor de {@link #tipo} do registro de inicialização, que não é medição de nível. */
+    public static final String TIPO_BOOT = "boot";
+
     protected Leitura() {
         // exigido pelo JPA
     }
@@ -64,6 +86,16 @@ public class Leitura {
         this.versaoRegra = versaoRegra;
     }
 
+    public Leitura(String jardimId, String sensorId, Double nivelCm, Integer bateria, Instant recebidoEm,
+                    Instant timestampDispositivo, String estado, String tendenciaDispositivo, String versaoRegra,
+                    String tipo, String bootId, Long seq) {
+        this(jardimId, sensorId, nivelCm, bateria, recebidoEm, timestampDispositivo, estado,
+                tendenciaDispositivo, versaoRegra);
+        this.tipo = tipo;
+        this.bootId = bootId;
+        this.seq = seq;
+    }
+
     public Long getId() { return id; }
     public String getJardimId() { return jardimId; }
     public String getSensorId() { return sensorId; }
@@ -74,4 +106,10 @@ public class Leitura {
     public String getEstado() { return estado; }
     public String getTendenciaDispositivo() { return tendenciaDispositivo; }
     public String getVersaoRegra() { return versaoRegra; }
+
+    // tipo, bootId e seq são de uso interno (elegibilidade e idempotência): ficam fora das
+    // respostas JSON para o contrato de saída da API não mudar.
+    @JsonIgnore public String getTipo() { return tipo; }
+    @JsonIgnore public String getBootId() { return bootId; }
+    @JsonIgnore public Long getSeq() { return seq; }
 }
