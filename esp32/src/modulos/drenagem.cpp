@@ -24,6 +24,21 @@ static uint32_t backoff429Ms(uint32_t falhas) {
   return (seg > 300 ? 300 : seg) * 1000;
 }
 
+// Quadro rejeitado pelo decodificador. Conta (comando 'i': rejeitadosVersao),
+// loga a versao recebida e deixa o motivo em g_ultimoErro. So a versao entra no
+// contador; os demais motivos seguem como falha de codec.
+// LIMITACAO: hoje so e chamada no #ifdef SIMULATION, sobre o quadro que o proprio
+// firmware codificou, entao em operacao normal o contador fica em 0 (preparado
+// para o radio; ainda nao ha caminho real de recepcao).
+void contarRejeicaoQuadro(codec::MotivoRejeicao motivo, uint8_t versaoRecebida) {
+  if (motivo != codec::MotivoRejeicao::VERSAO) return;
+  g_envio.rejeitadosVersao++;
+  snprintf(g_ultimoErro, sizeof(g_ultimoErro), "quadro: versao 0x%02X", (unsigned)versaoRecebida);
+  Serial.printf("ENVIO: quadro rejeitado por versao 0x%02X (esperada 0x%02X); rejeitadosVersao=%lu\n",
+                (unsigned)versaoRecebida, (unsigned)codec::VERSAO,
+                (unsigned long)g_envio.rejeitadosVersao);
+}
+
 // Classifica a falha e agenda a próxima tentativa. O cursor NÃO avança: a linha
 // segue pendente (no 429 o receptor pode ter gravado o corpo; haverá duplicata).
 static void agendarNovaTentativa(int codigo) {
@@ -44,6 +59,8 @@ static void agendarNovaTentativa(int codigo) {
   } else if (codigo == -4) {
     espera = 60000;
     snprintf(g_ultimoErro, sizeof(g_ultimoErro), "codec: linha invalida");
+  } else if (codigo == -5) {
+    espera = 60000;  // g_ultimoErro ja foi preenchido por contarRejeicaoQuadro
   } else if (codigo >= 400 && codigo < 500) {
     // Erro de contrato é sistêmico: para a fila e retenta em 5 min (INC 5).
     espera = 300000;
@@ -312,10 +329,12 @@ void tentarEnviarLote() {
 
 #ifdef SIMULATION
   codec::Quadro d;
-  if (!codec::decodificar(quadro, tam, &d)) {
+  codec::MotivoRejeicao motivo = codec::MotivoRejeicao::NENHUM;
+  if (!codec::decodificar(quadro, tam, &d, &motivo)) {
     Serial.println("ENVIO: falha ao decodificar o lote");
     g_envio.falhas++;
-    agendarNovaTentativa(-4);
+    contarRejeicaoQuadro(motivo, quadro[0]);
+    agendarNovaTentativa(motivo == codec::MotivoRejeicao::VERSAO ? -5 : -4);
     return;
   }
 

@@ -7,7 +7,15 @@
     { "type": "wokwi-potentiometer", "id": "pot1", "top": -180, "left": 200, "attrs": {} },
     { "type": "wokwi-potentiometer", "id": "pot2", "top": -60, "left": 200, "attrs": {} },
     { "type": "wokwi-potentiometer", "id": "pot3", "top": 60, "left": 200, "attrs": {} },
-    { "type": "wokwi-potentiometer", "id": "pot4", "top": 180, "left": 200, "attrs": {} }
+    { "type": "wokwi-potentiometer", "id": "pot4", "top": 180, "left": 200, "attrs": {} },
+
+    { "type": "wokwi-led", "id": "ledVerde", "top": -140, "left": -250, "attrs": { "color": "green" } },
+    { "type": "wokwi-resistor", "id": "rVerde", "top": -100, "left": -190, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "ledAmarelo", "top": -60, "left": -250, "attrs": { "color": "yellow" } },
+    { "type": "wokwi-resistor", "id": "rAmarelo", "top": -20, "left": -190, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "ledVermelho", "top": 20, "left": -250, "attrs": { "color": "red" } },
+    { "type": "wokwi-resistor", "id": "rVermelho", "top": 60, "left": -190, "attrs": { "value": "220" } },
+    { "type": "wokwi-buzzer", "id": "bz1", "top": 120, "left": -250, "attrs": { "volume": "0.1" } }
   ],
   "connections": [
     [ "esp:TX0", "$serialMonitor:RX", "", [] ],
@@ -27,7 +35,22 @@
 
     [ "pot4:SIG", "esp:D35", "blue", [] ],
     [ "pot4:VCC", "esp:3V3", "red", [] ],
-    [ "pot4:GND", "esp:GND.1", "black", [] ]
+    [ "pot4:GND", "esp:GND.1", "black", [] ],
+
+    [ "esp:D13", "rVerde:1", "green", [] ],
+    [ "rVerde:2", "ledVerde:A", "green", [] ],
+    [ "ledVerde:C", "esp:GND.1", "black", [] ],
+
+    [ "esp:RX2", "rAmarelo:1", "yellow", [] ],
+    [ "rAmarelo:2", "ledAmarelo:A", "yellow", [] ],
+    [ "ledAmarelo:C", "esp:GND.1", "black", [] ],
+
+    [ "esp:D14", "rVermelho:1", "red", [] ],
+    [ "rVermelho:2", "ledVermelho:A", "red", [] ],
+    [ "ledVermelho:C", "esp:GND.1", "black", [] ],
+
+    [ "esp:D23", "bz1:2", "orange", [] ],
+    [ "bz1:1", "esp:GND.1", "black", [] ]
   ],
   "dependencies": {}
 }

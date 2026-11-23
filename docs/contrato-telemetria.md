@@ -120,9 +120,10 @@ Formato do corpo de erro (400 e 404 de jardim): `status`, `erro`, `mensagem`,
 (`^S\d{2}$`)**, mais o valor reservado `idSensor: "jardim"` para a unidade inteira
 (snapshots e `boot`). Detalhes em `docs/dicionario-de-dados.md`. A API **não valida**
 esse formato hoje (só exige não vazio): a validação será ligada **depois** que o
-firmware migrar, para não rejeitá-lo. Os exemplos legados `jardim-centro-01` /
-`sensor-01` ainda existem na configuração do firmware (`esp32/`) e na seção 2
-abaixo — são **legado a migrar**, não padrão.
+firmware migrar, para não rejeitá-lo. O firmware já envia `idJardim: "J01"`
+(constante `JARDIM_ID`); os ids de sensor `sensor-01`..`sensor-04` (legado, não
+`S01`..`S04`) seguem como estão e ainda precisam migrar: **legado a migrar**, não
+padrão. A migração dos sensores é do time de hardware (dicionário, seção 6).
 
 ---
 
@@ -137,8 +138,8 @@ abaixo — são **legado a migrar**, não padrão.
 | Campo             | Tipo            | Unidade          | Presente em                        | Descrição                                                                    |
 | ----------------- | --------------- | ---------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
 | `tipo`            | string          | —                | **todas**                          | `"evento"` (mudança de patamar), `"snapshot"` (heartbeat periódico), `"boot"` (primeira linha do boot) |
-| `idJardim`        | string          | —                | **todas**                          | Identificador do jardim (`jardim-centro-01`)                                  |
-| `idSensor`        | string          | —                | **todas**                          | `sensor-01`..`sensor-03` nos **eventos**; `jardim` nos **snapshots** e na linha de **boot** (esses dois representam a unidade inteira) |
+| `idJardim`        | string          | —                | **todas**                          | Identificador do jardim (`J01`, constante `JARDIM_ID`; antes `jardim-centro-01`) |
+| `idSensor`        | string          | —                | **todas**                          | `sensor-01`..`sensor-03` (T1592) e `sensor-04` (sonda HW-02) nos **eventos**; `jardim` nos **snapshots** e na linha de **boot** (esses dois representam a unidade inteira) |
 | `nivelAgua`       | number (1 casa) | centímetros       | **todas**                          | Nível atual do nível mais alto molhado (`0.0` quando nada está molhado)        |
 | `bateria`         | number (int)    | escala 0-100     | **todas**                          | Carga da bateria — hoje é um valor **constante** (`100`); não há sensor de bateria no firmware |
 | `timestamp`       | string          | ISO-8601 em UTC  | **todas**                          | Instante do **evento** (não o da gravação). Ver §2.3                            |
@@ -147,34 +148,42 @@ abaixo — são **legado a migrar**, não padrão.
 | `deltaTMs`        | number (int)    | milissegundos    | **só evento de SUBIDA de nível**   | Tempo entre patamares. **Omitido** nas quedas e nos snapshots/boot, para economizar bytes |
 | `lat` / `lon`     | number (6 casas)| graus            | **só a linha de boot** (simulação)  | Coordenadas configuradas do jardim. **PLACEHOLDER** (`0.0`) — valor configurado, não medido; a equipe define o valor real |
 | `horaSincronizada`| boolean         | —                | **todas**                          | `true` se o relógio estava sincronizado (NTP) quando o registro nasceu; `false` enquanto o horário é **estimado** |
+| `estado`          | string          | —                | **só registros com classificação** | Estado físico da sonda: `NORMAL`, `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`. Faixas e histerese **provisórias** (`esp32/src/modulos/estado_fisico.h`). Omitido em registro sem classificação (ex.: eventos T1592) |
+| `tendenciaDispositivo` | string     | —                | **só registros com classificação** | Tendência calculada pelo firmware (`SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`, `INDETERMINADO`, `DESATUALIZADO`). Só auditoria na API |
+| `versaoRegra`     | string          | —                | **junto com `estado` ou `tendenciaDispositivo`** | Versão da regra que classificou (`v1-provisoria-2026-11`) |
 
 ### 2.2 Exemplos reais (gerados na simulação)
 
 Linha de **boot** (primeira do arquivo, `seq 0`):
 
 ```json
-{"tipo":"boot","idJardim":"jardim-centro-01","idSensor":"jardim","nivelAgua":0.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":0,"bootId":"00000032","lat":0.000000,"lon":0.000000,"horaSincronizada":false}
+{"tipo":"boot","idJardim":"J01","idSensor":"jardim","nivelAgua":0.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":0,"bootId":"00000032","lat":0.000000,"lon":0.000000,"horaSincronizada":false}
 ```
 
 Linha de **snapshot** (heartbeat periódico):
 
 ```json
-{"tipo":"snapshot","idJardim":"jardim-centro-01","idSensor":"jardim","nivelAgua":0.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":1,"bootId":"00000032","horaSincronizada":false}
+{"tipo":"snapshot","idJardim":"J01","idSensor":"jardim","nivelAgua":0.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":1,"bootId":"00000032","horaSincronizada":false}
 ```
 
 Linha de **evento** (mudança de patamar, sem subida):
 
 ```json
-{"tipo":"evento","idJardim":"jardim-centro-01","idSensor":"sensor-01","nivelAgua":5.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":2,"bootId":"00000032","horaSincronizada":false}
+{"tipo":"evento","idJardim":"J01","idSensor":"sensor-01","nivelAgua":5.0,"bateria":100,"timestamp":"2026-10-15T00:00:00Z","seq":2,"bootId":"00000032","horaSincronizada":false}
 ```
 
 Linha de **evento** (subida de nível — única com `deltaTMs`):
 
 ```json
-{"tipo":"evento","idJardim":"jardim-centro-01","idSensor":"sensor-02","nivelAgua":10.0,"bateria":100,"timestamp":"2026-10-15T00:00:01Z","seq":5,"bootId":"00000032","deltaTMs":100,"horaSincronizada":false}
+{"tipo":"evento","idJardim":"J01","idSensor":"sensor-02","nivelAgua":10.0,"bateria":100,"timestamp":"2026-10-15T00:00:01Z","seq":5,"bootId":"00000032","deltaTMs":100,"horaSincronizada":false}
 ```
 
-Tamanhos médios: evento **189 B**, snapshot **188 B**, boot **214 B** (incluindo o LF).
+Tamanhos médios: evento **189 B**, snapshot **188 B**, boot **214 B** (incluindo o LF), medidos
+antes de `estado`, `tendenciaDispositivo` e `versaoRegra` (+~100 B quando presentes). A linha mais
+longa (boot com todos os campos e `seq` de 32 bits) mede 328 B; o buffer é de 384 B.
+
+O **nível** (`nivelAgua`) chega à API com a mesma casa decimal gravada na linha: o quadro v2 do
+envio local carrega o nível em décimos de cm (42,5 cm = 425), sem arredondar para inteiro.
 
 ### 2.3 Hora do registro: `timestamp` e `horaSincronizada`
 

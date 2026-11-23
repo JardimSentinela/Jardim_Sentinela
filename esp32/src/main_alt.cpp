@@ -17,6 +17,7 @@
 #include "modulos/hw02_sonda.h"
 #include "modulos/rede.h"
 #include "modulos/relogio.h"
+#include "modulos/totem.h"
 
 void setup() {
   Serial.begin(115200);
@@ -30,6 +31,7 @@ void setup() {
   analogSetAttenuation(ADC_11db);
 
   iniciarSonda();
+  iniciarTotem();
 
   if (!LittleFS.begin(true)) Serial.println("ERRO: LittleFS");
 
@@ -55,11 +57,14 @@ void setup() {
 
   filaEventos = xQueueCreate(32, sizeof(Evento));
   xTaskCreatePinnedToCore(tarefaAmostragem, "amostra", 4096, nullptr, 3, nullptr, 1);
+  iniciarTarefaTotem();
 }
 
 void loop() {
   atualizarWifi();
   atualizarHora();
+  // O totem NAO e atualizado aqui: roda na propria tarefa (iniciarTarefaTotem),
+  // independente do envio HTTP que bloqueia este loop.
 
   Evento e;
   while (xQueueReceive(filaEventos, &e, 0) == pdTRUE) {
@@ -87,6 +92,7 @@ void loop() {
     tentarEnviarLote();
   }
 
-  // Sem delay(): o loop não bloqueia (critério 12). A amostragem tem
-  // prioridade maior (3) e mantém seu período de 100 ms.
+  // Sem delay() (critério 12). Atenção: tentarEnviarLote() BLOQUEIA em http.POST()
+  // (até HTTP_TIMEOUT_MS). Por isso amostragem (prio 3) e totem (prio 2) rodam em
+  // tarefas próprias e não dependem deste loop.
 }

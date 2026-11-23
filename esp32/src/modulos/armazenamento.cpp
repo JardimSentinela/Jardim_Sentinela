@@ -270,8 +270,7 @@ void injetarLinhaTruncada() {
   File f = LittleFS.open(ARQ_FILA, "a");
   if (!f) { Serial.println("TESTE: nao abriu a fila para injetar"); return; }
   static const char* TRUNCADA =
-      "{\"tipo\":\"snapshot\",\"idJardim\":\"jardim-centro-01\","
-      "\"idSensor\":\"jardim\",\"nivelAgua\":";
+      "{\"tipo\":\"snapshot\",\"idSensor\":\"jardim\",\"nivelAgua\":";
   size_t n = f.print(TRUNCADA);  // sem '\n' de proposito
   f.close();
   arquivoPodeTerLinhaParcial = true;
