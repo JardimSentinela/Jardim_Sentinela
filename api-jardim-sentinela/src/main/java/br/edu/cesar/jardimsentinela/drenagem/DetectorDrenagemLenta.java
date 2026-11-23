@@ -18,6 +18,15 @@ import br.edu.cesar.jardimsentinela.tendencia.LeituraNivel;
  * estrita). Função pura: o tempo vem das leituras, sem relógio global.
  *
  * Critério experimental, ver docs/drenagem-lenta.md.
+ *
+ * <p><b>Decisão mutável:</b> esta regra recebe snapshots periódicos <b>e</b> eventos
+ * discretos (T1592) como medições, porque ambos trazem nível válido e a taxa usa o
+ * tempo real entre a primeira e a última leitura. Essa escolha é provisória e pode
+ * mudar por decisão da equipe — ver issue #29, item "Divergência entre Eventos T1592
+ * e Snapshots periódicos". Se a API passar a considerar somente snapshots, o filtro
+ * deve ser aplicado a quem monta a lista {@code leituras} (ver DrenagemService) e os
+ * testes desta classe precisam ser ajustados junto. Nenhuma das duas políticas está
+ * acordada como definitiva.
  */
 public final class DetectorDrenagemLenta {
 
@@ -44,6 +53,11 @@ public final class DetectorDrenagemLenta {
     private DetectorDrenagemLenta() {
     }
 
+    /**
+     * @param leituras medições elegíveis, já ordenadas ou não. Hoje inclui snapshots e
+     *                 eventos T1592; essa composição é uma decisão provisória (issue #29)
+     *                 e pode ser alterada pela equipe sem mudar o cálculo da taxa.
+     */
     public static Resultado avaliar(List<LeituraNivel> leituras, Duration janela, double limiteCmPorMin) {
         List<LeituraNivel> validas = new ArrayList<>();
         int descartadas = 0;

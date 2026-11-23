@@ -49,6 +49,8 @@ class DrenagemServiceTests {
         assertEquals(1.0 / 50.0, r.taxaCmMin(), 1e-9);
     }
 
+    // Cobertura da decisão provisória (issue #29): se a equipe decidir que a API
+    // usa só snapshots, este cenário muda junto com o filtro em DrenagemService.
     @Test
     void eventoEMedicaoComoSnapshot() {
         repository.save(new Leitura("J01", "S01", 20.0, 90, T0, T0, null, null, null,

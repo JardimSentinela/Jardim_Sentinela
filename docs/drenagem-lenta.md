@@ -12,10 +12,19 @@ Sinalizar ao operador que o jardim está drenando devagar depois de uma chuva, o
 
 Entrada: leituras válidas do jardim (ver `CalculadoraTendencia.ehValida`), em ordem cronológica (`timestampDispositivo`, com `recebidoEm` como alternativa).
 
-**Quais registros entram** (decisão do minha mesmo, Arthur para discutir com equipe em momemnto oportuno, 20/11):
+**Quais registros entram** (decisão provisória, 20/11):
 - **Snapshots periódicos** (heartbeat) e **eventos** entram, tratados da mesma forma: são medições de nível.
 - O **registro de boot** não entra: traz nível fictício (0 cm no boot) e a consulta da SW-14 o exclui (`tipo = 'boot'`).
 - Eventos ocorrem em horários irregulares (disparados por mudança). A regra não depende de espaçamento regular, porque usa a primeira e a última leitura da janela e divide pelo tempo real entre elas.
+
+> **Essa escolha é mutável.** A issue #29, item *"Divergência entre Eventos T1592 e
+> Snapshots periódicos"*, registra que o firmware calcula a tendência local apenas com
+> snapshots, enquanto a API aceita qualquer medição válida. Se a equipe decidir que a
+> API deve considerar somente snapshots, o critério muda: a filtragem entra em
+> `DrenagemService` (query/stream), o `DetectorDrenagemLenta` continua calculando a taxa
+> a partir da lista que recebe, e os testes são ajustados. Não há acordo definitivo
+> sobre essa política até o momento; o comportamento atual é apenas o ponto de partida
+> desta regra experimental.
 
 1. A **janela** termina na leitura mais recente e tem **60 minutos**.
 2. Dentro da janela, a **queda** é `nível(primeira) − nível(última)`.
@@ -39,6 +48,7 @@ Entrada: leituras válidas do jardim (ver `CalculadoraTendencia.ehValida`), em o
 ## 4. Pendências
 
 - Decidir se a regra será exposta na API e em qual campo (hoje só existe como função pura, `DetectorDrenagemLenta`).
+- **Decidir, com a equipe de firmware/hardware, se eventos T1592 entram ou não no cálculo** (issue #29). Até lá, a inclusão de eventos é provisória e pode ser revertida sem alterar a versão da regra.
 - Validar limite e janela com dados de campo.
 - Definir o critério de "após a chuva" (por exemplo, nível acima de um patamar nas últimas horas).
 
