@@ -25,10 +25,10 @@ jobs:
       run:
         working-directory: api-jardim-sentinela
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configurar JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -40,7 +40,7 @@ jobs:
 
       - name: Publicar relatório de testes
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: api-surefire-reports
           path: api-jardim-sentinela/target/surefire-reports/
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # O frontend entra na develop pelo PR #19. Enquanto ele não existir,
       # as etapas abaixo são ignoradas em vez de falhar o pipeline.
@@ -68,7 +68,7 @@ jobs:
 
       - name: Configurar Node 22
         if: steps.frontend.outputs.existe == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -99,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Verificar se os testes de host existem
         id: firmware
@@ -113,7 +113,7 @@ jobs:
 
       - name: Configurar Python 3.12
         if: steps.firmware.outputs.existe == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
