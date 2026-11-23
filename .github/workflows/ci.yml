@@ -1,0 +1,136 @@
+name: CI
+
+# Roda em todo pull request e nos pushes para develop e main.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+# Um push novo no mesmo PR/branch cancela a execução anterior.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: API (testes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: api-jardim-sentinela
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: api-jardim-sentinela/pom.xml
+
+      - name: Garantir permissão de execução no wrapper
+        run: chmod +x mvnw
+
+      - name: Rodar testes (./mvnw test)
+        run: ./mvnw -B -ntp test
+
+      - name: Publicar relatório de testes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-surefire-reports
+          path: api-jardim-sentinela/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  frontend:
+    name: Frontend (lint, testes e build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # O frontend entra na develop pelo PR #19. Enquanto ele não existir,
+      # as etapas abaixo são ignoradas em vez de falhar o pipeline.
+      - name: Verificar se o frontend existe
+        id: frontend
+        run: |
+          if [ -f frontend/package.json ]; then
+            echo "existe=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "existe=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::frontend/package.json não existe neste branch; etapa de frontend ignorada."
+          fi
+
+      - name: Configurar Node 22
+        if: steps.frontend.outputs.existe == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependências
+        if: steps.frontend.outputs.existe == 'true'
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        if: steps.frontend.outputs.existe == 'true'
+        working-directory: frontend
+        run: npm run lint
+
+      # Usa --if-present porque no PR #19 o script de teste ainda não existia (só entra no PR #26)
+      - name: Testes (Vitest)
+        if: steps.frontend.outputs.existe == 'true'
+        working-directory: frontend
+        run: npm test --if-present
+
+      - name: Build
+        if: steps.frontend.outputs.existe == 'true'
+        working-directory: frontend
+        run: npm run build
+
+  firmware:
+    name: Firmware (testes de host)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar se os testes de host existem
+        id: firmware
+        run: |
+          if [ -f esp32/test/host/run_tests.py ]; then
+            echo "existe=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "existe=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::esp32/test/host/run_tests.py não existe neste branch; etapa de firmware ignorada."
+          fi
+
+      - name: Configurar Python 3.12
+        if: steps.firmware.outputs.existe == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # O runner ubuntu-latest já traz g++ com C++17.
+      - name: Rodar testes de host
+        if: steps.firmware.outputs.existe == 'true'
+        working-directory: esp32
+        run: python3 test/host/run_tests.py --verbose
+
+      - name: Rodar testes do receptor local
+        if: steps.firmware.outputs.existe == 'true'
+        working-directory: esp32
+        run: |
+          if [ -f test/receiver/test_receber.py ]; then
+            python3 test/receiver/test_receber.py
+          fi

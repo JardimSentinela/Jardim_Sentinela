@@ -39,6 +39,9 @@
 | Nível de água     | `nivelAgua`        | `nivelCm`                  | `nivelCm`              | decimal (cm)    | sim    | ≥ 0                        |
 | Bateria           | `bateria`          | —                          | `bateria`              | inteiro (%)     | sim    | 0 a 100                    |
 | Hora da medição   | `timestamp`        | —                          | `timestampDispositivo` | ISO-8601 UTC    | não    | data válida; `null` se ausente |
+| Estado físico     | `estado`           | —                          | `estado`               | string (enum)   | não    | `NORMAL`, `ENCHENDO`, `TRANSBORDANDO` ou `ALAGADO`; guardado como veio, a API não reclassifica |
+| Tendência do dispositivo | `tendenciaDispositivo` | —              | `tendenciaDispositivo` | string (enum)   | não    | `SUBINDO`, `ESTAVEL`, `DESCENDO`, `INSUFICIENTE`, `INDETERMINADO` ou `DESATUALIZADO`; só auditoria, nunca recalculada |
+| Versão da regra   | `versaoRegra`      | —                          | `versaoRegra`          | string          | não    | até 64 caracteres (ex.: `v1-provisoria-2026-11`) |
 | Hora de recebimento | — (não enviar)   | —                          | `recebidoEm`           | ISO-8601 UTC    | —      | preenchido pelo servidor   |
 | Identificador     | — (não enviar)     | —                          | `id`                   | número          | —      | gerado pelo banco          |
 
@@ -48,6 +51,19 @@ vale no piloto real é decisão do **time de hardware**, não do dicionário.
 
 **Atenção:** `timestamp` (requisição) e `timestampDispositivo` (API) são o **mesmo
 dado**. Não crie um terceiro nome (`medidoEm`, `dataLeitura`…).
+
+### 2.1 Campos de resposta de `GET /api/jardins` (lista)
+
+[SCRUM-20][SW-11] Um item por jardim que já enviou ao menos uma leitura, ordenado por `jardimId`
+(sem leitura, o jardim não aparece; sem nenhum jardim, `[]` com 200).
+
+| Campo             | Tipo            | Descrição                                                    |
+| ----------------- | --------------- | ------------------------------------------------------------ |
+| `jardimId`        | string          | Id do jardim                                                 |
+| `nivelCm`         | decimal (cm)    | Nível da leitura mais recente                                |
+| `estado`          | string (enum)   | Estado do registro mais recente, como o dispositivo enviou; `null` sem classificação |
+| `ultimaLeituraEm` | ISO-8601 UTC    | `timestampDispositivo` (ou `recebidoEm` se nulo) da leitura mais recente |
+| `totalLeituras`   | inteiro         | Quantidade de leituras do jardim                             |
 
 ## 3. Campos de resposta de `GET /api/jardins/{id}`
 

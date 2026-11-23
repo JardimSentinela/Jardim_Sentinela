@@ -50,7 +50,10 @@ public class LeituraController {
                 leitura.nivelCm(),
                 leitura.bateria(),
                 Instant.now(),
-                leitura.timestamp()));
+                leitura.timestamp(),
+                leitura.estado(),
+                leitura.tendenciaDispositivo(),
+                leitura.versaoRegra()));
         return ResponseEntity.created(URI.create("/api/leituras/" + salva.getId())).body(salva);
     }
 
