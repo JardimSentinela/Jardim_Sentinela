@@ -6,6 +6,16 @@
  * bateria de 0 a 100 e datas em ISO-8601 UTC).
  */
 
+/** Item de `GET /api/jardins` (resumo da leitura mais recente de cada jardim). */
+export interface JardimResumo {
+  jardimId: string
+  nivelCm: number
+  /** Estado enviado pelo dispositivo (`NORMAL`, `ENCHENDO`, `TRANSBORDANDO`, `ALAGADO`) ou `null`. */
+  estado: string | null
+  ultimaLeituraEm: string | null
+  totalLeituras: number
+}
+
 export interface JardimResponse {
   jardimId: string
   sensorId: string
@@ -13,6 +23,18 @@ export interface JardimResponse {
   bateria: number
   ultimaLeituraEm: string | null
   totalLeituras: number
+  /**
+   * Estado do registro mais recente, como o dispositivo enviou. A API não
+   * recalcula; `null`/ausente em registros antigos ou quando o backend ainda
+   * não expõe o campo.
+   */
+  estado?: string | null
+  /**
+   * Tendência calculada pela API (`SUBINDO`, `ESTAVEL`, `DESCENDO`,
+   * `INSUFICIENTE`, `INDETERMINADO`, `DESATUALIZADO`). `null`/ausente quando a
+   * API não expõe o campo — nesse caso a interface mostra "Indisponível".
+   */
+  tendencia?: string | null
 }
 
 export interface Leitura {
@@ -23,6 +45,9 @@ export interface Leitura {
   bateria: number
   recebidoEm: string
   timestampDispositivo: string | null
+  estado?: string | null
+  tendenciaDispositivo?: string | null
+  versaoRegra?: string | null
 }
 
 /**
@@ -134,6 +159,141 @@ export function calcularStatusAlerta(nivelCm: number): InformacoesAlerta {
   }
 
   return { ...INFORMACOES_POR_NIVEL[chave], nivel: chave }
+}
+
+/**
+ * Estados enviados pelo dispositivo (`GET /api/jardins` e `GET /api/jardins/{id}`).
+ * O dispositivo usa `NORMAL` para o que o dashboard chama de `SECO`.
+ */
+const NIVEL_POR_ESTADO_API: Record<string, NivelAlerta> = {
+  NORMAL: 'SECO',
+  SECO: 'SECO',
+  ENCHENDO: 'ENCHENDO',
+  TRANSBORDANDO: 'TRANSBORDANDO',
+  ALAGADO: 'ALAGADO',
+}
+
+/** Converte o `estado` da API em um dos quatro estados do dashboard, com tolerância a valores desconhecidos. */
+export function mapearEstadoApi(estado: string | null | undefined): NivelAlerta | null {
+  if (!estado) {
+    return null
+  }
+  return NIVEL_POR_ESTADO_API[estado.trim().toUpperCase()] ?? null
+}
+
+/**
+ * Monta o estado exibido no dashboard priorizando o `estado` vindo da API.
+ * Só deriva a faixa pelo nível quando o backend não envia classificação
+ * (registros antigos), mantendo a tela funcional sem inventar o campo.
+ */
+export function alertaDoJardim(
+  jardim: Pick<JardimResponse, 'nivelCm' | 'estado'>,
+): InformacoesAlerta {
+  const nivel =
+    mapearEstadoApi(jardim.estado) ?? calcularStatusAlerta(jardim.nivelCm).nivel
+  return { ...INFORMACOES_POR_NIVEL[nivel], nivel }
+}
+
+/** Tendências calculadas pela API (SW-14). */
+export type TendenciaApi =
+  | 'SUBINDO'
+  | 'ESTAVEL'
+  | 'DESCENDO'
+  | 'INSUFICIENTE'
+  | 'INDETERMINADO'
+  | 'DESATUALIZADO'
+
+export const TENDENCIAS_API: readonly TendenciaApi[] = [
+  'SUBINDO',
+  'ESTAVEL',
+  'DESCENDO',
+  'INSUFICIENTE',
+  'INDETERMINADO',
+  'DESATUALIZADO',
+]
+
+export interface InformacoesTendencia {
+  titulo: string
+  descricao: string
+  cor: string
+  corTexto: string
+  /** `false` quando a API não informou uma tendência reconhecida. */
+  disponivel: boolean
+}
+
+const TENDENCIA_INDISPONIVEL: InformacoesTendencia = {
+  titulo: 'Indisponível',
+  descricao: 'A API não informou a tendência para este jardim.',
+  cor: '#6b7280',
+  corTexto: '#ffffff',
+  disponivel: false,
+}
+
+export const INFORMACOES_TENDENCIA: Record<TendenciaApi, InformacoesTendencia> = {
+  SUBINDO: {
+    titulo: 'Subindo',
+    descricao: 'O nível subiu além da tolerância nas leituras mais recentes.',
+    cor: '#005b7f',
+    corTexto: '#ffffff',
+    disponivel: true,
+  },
+  ESTAVEL: {
+    titulo: 'Estável',
+    descricao:
+      'A variação entre a primeira e a última leitura ficou dentro da tolerância; não significa que o nível ficou parado.',
+    cor: '#e4b739',
+    corTexto: '#071d41',
+    disponivel: true,
+  },
+  DESCENDO: {
+    titulo: 'Descendo',
+    descricao: 'O nível desceu além da tolerância nas leituras mais recentes.',
+    cor: '#30e4bc',
+    corTexto: '#071d41',
+    disponivel: true,
+  },
+  INSUFICIENTE: {
+    titulo: 'Poucos dados',
+    descricao: 'Ainda não há leituras suficientes para calcular a tendência.',
+    cor: '#6b7280',
+    corTexto: '#ffffff',
+    disponivel: true,
+  },
+  INDETERMINADO: {
+    titulo: 'Indeterminado',
+    descricao: 'Não foi possível determinar a direção da variação com as leituras disponíveis.',
+    cor: '#6b7280',
+    corTexto: '#ffffff',
+    disponivel: true,
+  },
+  DESATUALIZADO: {
+    titulo: 'Sem dados recentes',
+    descricao: 'A última leitura recebida está mais antiga que o limite configurado na API.',
+    cor: '#9a3412',
+    corTexto: '#ffffff',
+    disponivel: true,
+  },
+}
+
+/** Normaliza valores da API; valores desconhecidos viram `null` (tratados como indisponíveis). */
+export function normalizarTendencia(
+  valor: string | null | undefined,
+): TendenciaApi | null {
+  if (!valor) {
+    return null
+  }
+  const normalizado = valor.trim().toUpperCase()
+  return (TENDENCIAS_API as readonly string[]).includes(normalizado)
+    ? (normalizado as TendenciaApi)
+    : null
+}
+
+/** Metadados de exibição da tendência, com fallback seguro para valores novos/desconhecidos. */
+export function informacoesTendencia(
+  valor: string | null | undefined,
+): InformacoesTendencia {
+  const tendencia = normalizarTendencia(valor)
+  return tendencia ? INFORMACOES_TENDENCIA[tendencia] : TENDENCIA_INDISPONIVEL
 }
 
 const formatadorData = new Intl.DateTimeFormat('pt-BR', {

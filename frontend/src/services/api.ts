@@ -1,17 +1,13 @@
-import type { JardimResponse, Leitura } from '../types/jardim'
-import {
-  buscarHistoricoMock,
-  buscarJardimMock,
-  dadosCOPMock,
-  todasLeiturasMock,
-} from './mockData'
+import type { JardimResponse, JardimResumo, Leitura } from '../types/jardim'
+import { dadosCOPMock } from './mockData'
 
 /**
  * Camada de acesso à API Java do Jardim Sentinela.
  *
- * Toda chamada tem fallback gracioso para `mockData.ts`: se a API estiver fora
- * do ar, demorar demais ou bloquear a requisição por CORS, o dashboard continua
- * funcionando e o console avisa que os dados exibidos são de demonstração.
+ * Os dados de jardins e de histórico vêm exclusivamente da API: se ela estiver
+ * fora do ar, a chamada rejeita com `ApiError` e a interface mostra o erro
+ * (com opção de tentar novamente). Não há mais fallback silencioso para mock —
+ * o único mock restante é o painel COP, que ainda não tem endpoint.
  */
 
 export const API_BASE_URL = (
@@ -20,24 +16,30 @@ export const API_BASE_URL = (
 
 const TIMEOUT_REQUISICAO_MS = 5000
 
-let loteUsouDadosMock = false
+/** Códigos estáveis para a interface distinguir timeout, rede e erros da API. */
+export type CodigoErroApi =
+  | 'TIMEOUT'
+  | 'REDE'
+  | 'RESPOSTA_INVALIDA'
+  | 'JARDIM_NAO_ENCONTRADO'
+  | (string & {})
 
-/**
- * Marca o início de um conjunto de consultas (por exemplo, o `Promise.all` de
- * um hook) para que o consumidor saiba se alguma delas precisou do mock.
- */
-export function iniciarLoteDeConsultas(): void {
-  loteUsouDadosMock = false
+/** Erro normalizado da API, com status HTTP e código devolvido pelo backend. */
+export class ApiError extends Error {
+  readonly status: number
+  readonly codigo?: CodigoErroApi
+
+  constructor(mensagem: string, status = 0, codigo?: CodigoErroApi) {
+    super(mensagem)
+    this.name = 'ApiError'
+    this.status = status
+    this.codigo = codigo
+  }
 }
 
-/** Indica se alguma consulta do último lote caiu no fallback mockado. */
-export function ultimoLoteUsouMock(): boolean {
-  return loteUsouDadosMock
-}
-
-/** Atalho para quando uma consulta isolada é feita fora de um lote. */
-export function apiEstaUsandoMock(): boolean {
-  return loteUsouDadosMock
+interface CorpoErroApi {
+  erro?: string
+  mensagem?: string
 }
 
 async function requisitar<T>(caminho: string): Promise<T> {
@@ -55,50 +57,77 @@ async function requisitar<T>(caminho: string): Promise<T> {
     })
 
     if (!resposta.ok) {
-      let detalhe = `HTTP ${resposta.status}`
+      let corpo: CorpoErroApi = {}
       try {
-        const corpo = (await resposta.json()) as { mensagem?: string; erro?: string }
-        const mensagem = corpo.mensagem ?? corpo.erro
-        if (mensagem) {
-          detalhe += ` - ${mensagem}`
-        }
+        corpo = (await resposta.json()) as CorpoErroApi
       } catch {
         // Corpo vazio ou não-JSON: mantém apenas o status HTTP.
       }
-      throw new Error(detalhe)
+      const mensagem =
+        corpo.mensagem ?? corpo.erro ?? `A API respondeu com HTTP ${resposta.status}.`
+      throw new ApiError(mensagem, resposta.status, corpo.erro)
     }
 
-    return (await resposta.json()) as T
+    try {
+      return (await resposta.json()) as T
+    } catch {
+      throw new ApiError(
+        'A resposta da API não é um JSON válido.',
+        resposta.status,
+        'RESPOSTA_INVALIDA',
+      )
+    }
+  } catch (erro) {
+    if (erro instanceof ApiError) {
+      throw erro
+    }
+
+    const nomeDoErro =
+      typeof erro === 'object' && erro !== null && 'name' in erro
+        ? String((erro as { name?: unknown }).name)
+        : ''
+
+    if (nomeDoErro === 'AbortError' || controlador.signal.aborted) {
+      throw new ApiError(
+        `A API não respondeu em ${TIMEOUT_REQUISICAO_MS / 1000} segundos.`,
+        0,
+        'TIMEOUT',
+      )
+    }
+
+    throw new ApiError(
+      erro instanceof Error ? erro.message : 'Falha de rede ao consultar a API.',
+      0,
+      'REDE',
+    )
   } finally {
     globalThis.clearTimeout(temporizador)
   }
 }
 
-function usarFallback<T>(descricao: string, erro: unknown, dados: T): T {
-  loteUsouDadosMock = true
-  const motivo = erro instanceof Error ? erro.message : String(erro)
-  console.warn(
-    `[Jardim Sentinela] ${descricao} indisponível (${motivo}). ` +
-      'Exibindo dados mockados para manter o dashboard funcional.',
-  )
-  return dados
+function exigirLista<T>(valor: unknown, descricao: string): T[] {
+  if (!Array.isArray(valor)) {
+    throw new ApiError(
+      `Resposta inesperada para ${descricao}: esperada uma lista.`,
+      0,
+      'RESPOSTA_INVALIDA',
+    )
+  }
+  return valor as T[]
 }
 
-/** Busca o estado atual de um jardim (`GET /api/jardins/{id}`). */
+/** Lista os jardins que já enviaram leitura (`GET /api/jardins`). */
+export async function fetchJardins(): Promise<JardimResumo[]> {
+  const dados = await requisitar<unknown>('/api/jardins')
+  return exigirLista<JardimResumo>(dados, 'a lista de jardins')
+}
+
+/**
+ * Busca o estado atual de um jardim (`GET /api/jardins/{id}`).
+ * Inclui `estado` e `tendencia` quando o backend os expõe.
+ */
 export async function fetchJardim(id: string): Promise<JardimResponse> {
-  const descricao = `Estado do jardim ${id}`
-  try {
-    const jardim = await requisitar<JardimResponse>(
-      `/api/jardins/${encodeURIComponent(id)}`,
-    )
-    return jardim
-  } catch (erro) {
-    const mock = buscarJardimMock(id)
-    if (!mock) {
-      throw new Error(`Jardim "${id}" não encontrado na API nem nos dados mockados.`)
-    }
-    return usarFallback(descricao, erro, mock)
-  }
+  return requisitar<JardimResponse>(`/api/jardins/${encodeURIComponent(id)}`)
 }
 
 /** Busca o histórico de um jardim (`GET /api/jardins/{id}/leituras?limite=N`). */
@@ -107,40 +136,22 @@ export async function fetchHistorico(
   limite = 100,
 ): Promise<Leitura[]> {
   const limiteNormalizado = Math.min(1000, Math.max(1, Math.trunc(limite) || 1))
-  const descricao = `Histórico do jardim ${id}`
-
-  try {
-    const leituras = await requisitar<Leitura[]>(
-      `/api/jardins/${encodeURIComponent(id)}/leituras?limite=${limiteNormalizado}`,
-    )
-    if (!Array.isArray(leituras)) {
-      throw new Error('Resposta da API não é uma lista de leituras.')
-    }
-    return leituras
-  } catch (erro) {
-    return usarFallback(
-      descricao,
-      erro,
-      buscarHistoricoMock(id, limiteNormalizado),
-    )
-  }
+  const dados = await requisitar<unknown>(
+    `/api/jardins/${encodeURIComponent(id)}/leituras?limite=${limiteNormalizado}`,
+  )
+  return exigirLista<Leitura>(dados, `o histórico do jardim ${id}`)
 }
 
 /** Busca todas as leituras recebidas (`GET /api/leituras`). */
 export async function fetchTodasLeituras(): Promise<Leitura[]> {
-  try {
-    const leituras = await requisitar<Leitura[]>('/api/leituras')
-    if (!Array.isArray(leituras)) {
-      throw new Error('Resposta da API não é uma lista de leituras.')
-    }
-    return leituras
-  } catch (erro) {
-    return usarFallback('Lista completa de leituras', erro, todasLeiturasMock)
-  }
+  const dados = await requisitar<unknown>('/api/leituras')
+  return exigirLista<Leitura>(dados, 'a lista de leituras')
 }
 
-/** Dados do painel COP (ainda sem endpoint na API; sempre vem do mock). */
+/**
+ * Dados do painel COP: ainda não existe endpoint na API do Jardim Sentinela,
+ * então este painel continua usando `mockData.ts`.
+ */
 export function fetchDadosCOP() {
-  loteUsouDadosMock = true
   return dadosCOPMock
 }
