@@ -1,4 +1,5 @@
 import { render, screen, within, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { fetchHistorico, fetchJardim } from './services/api'
@@ -161,5 +162,56 @@ describe('App — integração com a API', () => {
     expect(
       screen.getAllByRole('button', { name: /Tentar novamente/i }).length,
     ).toBeGreaterThan(0)
+  })
+
+  it('atualiza status, dados e histórico ao selecionar outro jardim na rede', async () => {
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    // Aguarda carregar J01 inicialmente
+    const statusJ01 = await screen.findByRole('region', { name: 'Jardim J01' })
+    expect(within(statusJ01).getByText('Estado Atual: Seco')).toBeInTheDocument()
+
+    // Clica no card do Jardim J02 na Rede de Jardins
+    const rede = screen.getByRole('region', { name: 'Rede de Jardins' })
+    const botaoJ02 = within(rede).getByRole('button', {
+      name: 'Selecionar Jardim J02',
+    })
+    await user.click(botaoJ02)
+
+    // O status do detalhe deve atualizar para J02 com os dados reais
+    const statusJ02 = await screen.findByRole('region', { name: 'Jardim J02' })
+    expect(within(statusJ02).getByText('Estado Atual: Enchendo')).toBeInTheDocument()
+    expect(within(statusJ02).getByText('Estável')).toBeInTheDocument()
+
+    // O card de dados do jardim deve exibir os dados de J02
+    expect(within(statusJ02).getByRole('heading', { name: 'Jardim J02' })).toBeInTheDocument()
+    expect(screen.getByText('0,28 m/27,8 cm')).toBeInTheDocument()
+
+    // Histórico de J02 deve ter sido consultado na API
+    expect(fetchHistoricoMock).toHaveBeenCalledWith('J02', expect.any(Number))
+  })
+
+  it('trata histórico vazio para jardim selecionado sem quebrar a interface', async () => {
+    fetchHistoricoMock.mockImplementation(async (id) => (id === 'J03' ? [] : HISTORICO))
+
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    // Seleciona J03 que possui histórico vazio
+    const select = screen.getByRole('combobox', { name: /Selecione o Jardim/i })
+    await user.selectOptions(select, 'J03')
+
+    const statusJ03 = await screen.findByRole('region', { name: 'Jardim J03' })
+    expect(within(statusJ03).getByText('Estado Atual: Transbordando')).toBeInTheDocument()
+
+    expect(await screen.findByText('Sem leituras para exibir')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'O histórico aparece aqui assim que a API registrar leituras deste jardim.',
+      ),
+    ).toBeInTheDocument()
   })
 })

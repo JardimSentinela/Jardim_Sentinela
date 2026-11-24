@@ -32,3 +32,12 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver =
     ResizeObserverMock as unknown as typeof ResizeObserver
 }
+
+if (typeof window !== 'undefined') {
+  if (!window.URL.createObjectURL) {
+    window.URL.createObjectURL = () => 'blob:http://localhost/teste-blob'
+  }
+  if (!window.URL.revokeObjectURL) {
+    window.URL.revokeObjectURL = () => {}
+  }
+}

@@ -182,7 +182,7 @@ function App() {
                   <select
                     value={jardimSelecionado}
                     onChange={(evento) =>
-                      setJardimSelecionado(evento.target.value as JardimId)
+                      selecionarJardim(evento.target.value as JardimId)
                     }
                     className="cursor-pointer appearance-none bg-transparent pr-5 text-sm font-semibold text-[var(--cor-texto-forte)] focus:outline-none"
                   >
@@ -323,6 +323,8 @@ function App() {
                 historico={historico}
                 loading={loading && historico.length === 0}
                 corDestaque={corDestaqueDoGrafico(alerta?.cor, temaEscuro)}
+                error={error}
+                onTentarNovamente={() => void refetch()}
               />
             </div>
           </>

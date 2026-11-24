@@ -71,7 +71,7 @@ export function useJardimData(
       }
 
       try {
-        const [jardimAtualizado, historicoAtualizado] = await Promise.all([
+        const [resJardim, resHistorico] = await Promise.allSettled([
           fetchJardim(jardimId),
           fetchHistorico(jardimId, limiteHistorico),
         ])
@@ -80,9 +80,33 @@ export function useJardimData(
           return
         }
 
-        setJardim(jardimAtualizado)
-        setHistorico(historicoAtualizado)
-        setError(null)
+        if (resJardim.status === 'fulfilled') {
+          setJardim(resJardim.value)
+        } else {
+          setJardim(null)
+        }
+
+        if (resHistorico.status === 'fulfilled') {
+          setHistorico(resHistorico.value)
+        } else {
+          setHistorico([])
+        }
+
+        if (resJardim.status === 'rejected') {
+          setError(
+            resJardim.reason instanceof Error
+              ? resJardim.reason
+              : new Error('Falha ao carregar os dados do jardim.'),
+          )
+        } else if (resHistorico.status === 'rejected') {
+          setError(
+            resHistorico.reason instanceof Error
+              ? resHistorico.reason
+              : new Error('Falha ao carregar o histórico do jardim.'),
+          )
+        } else {
+          setError(null)
+        }
       } catch (erro) {
         if (jardimIdAtualRef.current !== jardimId) {
           return

@@ -77,4 +77,58 @@ describe('useJardimData', () => {
     expect(result.current.alerta).toBeNull()
     expect(result.current.error).toBeInstanceOf(ApiError)
   })
+
+  it('limpa dados e recarrega ao trocar o jardim selecionado', async () => {
+    fetchJardimMock.mockResolvedValue(jardim)
+    fetchHistoricoMock.mockResolvedValue([leitura])
+
+    let idAtual = 'J01'
+    const { result, rerender } = renderHook(() =>
+      useJardimData(idAtual, { intervaloPollingMs: 60_000 }),
+    )
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.jardim?.jardimId).toBe('J01')
+
+    const jardimJ02: JardimResponse = {
+      ...jardim,
+      jardimId: 'J02',
+      nivelCm: 28,
+      estado: 'ENCHENDO',
+    }
+    const leituraJ02: Leitura = {
+      ...leitura,
+      id: 99,
+      jardimId: 'J02',
+      nivelCm: 28,
+    }
+
+    fetchJardimMock.mockResolvedValue(jardimJ02)
+    fetchHistoricoMock.mockResolvedValue([leituraJ02])
+
+    idAtual = 'J02'
+    rerender()
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.jardim?.jardimId).toBe('J02')
+    expect(result.current.historico).toEqual([leituraJ02])
+    expect(result.current.alerta?.nivel).toBe('ENCHENDO')
+  })
+
+  it('mantém os dados do jardim quando apenas o histórico falha na consulta', async () => {
+    fetchJardimMock.mockResolvedValue(jardim)
+    fetchHistoricoMock.mockRejectedValue(
+      new ApiError('Histórico indisponível', 500, 'ERRO_HISTORICO'),
+    )
+
+    const { result } = renderHook(() =>
+      useJardimData('J01', { intervaloPollingMs: 60_000 }),
+    )
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.jardim).toEqual(jardim)
+    expect(result.current.historico).toEqual([])
+    expect(result.current.error).toBeInstanceOf(ApiError)
+  })
 })

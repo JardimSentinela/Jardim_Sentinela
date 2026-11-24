@@ -18,13 +18,19 @@ export default function RotuloBarra({
   width = 0,
   value = '',
   sufixo,
-  casasDecimais = 0,
+  casasDecimais,
 }: RotuloBarraProps) {
   const numero = Number(value)
+  const casas =
+    casasDecimais !== undefined
+      ? casasDecimais
+      : Number.isInteger(numero)
+        ? 0
+        : 1
   const texto = Number.isFinite(numero)
     ? numero.toLocaleString('pt-BR', {
-        minimumFractionDigits: casasDecimais,
-        maximumFractionDigits: casasDecimais,
+        minimumFractionDigits: casas,
+        maximumFractionDigits: casas,
       })
     : String(value)
 
