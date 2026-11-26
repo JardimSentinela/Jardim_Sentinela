@@ -46,9 +46,11 @@ cd frontend && npm ci && VITE_API_BASE_URL=http://localhost:8080 npm run dev
 > **Atenção ao `bootId`.** A API exige **8 caracteres hexadecimais** (`[0-9A-Fa-f]{8}`).
 > Em todos os comandos abaixo o `--boot-id` é passado explicitamente. Ver **BUG-1** (§6).
 > Usar `--boot-id=` com 8 hex **diferente a cada execução** (ex.: `0a0a0a01`, `0a0a0a02`).
-> **Enquanto o PR #34 (correção do BUG-1) não estiver mergeado na `develop`, o `--boot-id` de 8 hex é obrigatório**
-> (sem ele, ou com UUID, o runner recebe HTTP 400 em tudo). Depois da correção, o runner gera um
-> `bootId` válido sozinho e recusa um `--boot-id` fora do formato antes de enviar.
+> **A correção do BUG-1 (PR #34) já está na `develop` desde 26/11/2026 (`4d214c1`).** A partir dela, o
+> runner gera um `bootId` válido sozinho e recusa um `--boot-id` fora do formato antes de enviar.
+> **Quem estiver numa branch anterior a esse commit** (por exemplo, a do PR #33 sem atualizar com a
+> `develop`) **precisa passar um `--boot-id` de 8 hex**: sem ele, ou com UUID, o runner recebe HTTP 400
+> em tudo. Passar o `--boot-id` continua útil para reproduzir exatamente a mesma sequência (B4).
 
 ---
 
@@ -168,12 +170,12 @@ para listar o que apareceu:
 
 **[Dado a verificar] não executado no ensaio:** B2, B4, B5, B11, C2, C4–C6, C8, todo o bloco D.
 
-**Problemas que apareceram (nenhum corrigido):**
+**Problemas que apareceram** (situação atualizada em 26/11/2026, depois do merge do #34):
 
 | ID | Gravidade | O que aconteceu |
 |---|---|---|
-| **BUG-1** | **Alta** (bloqueava o SW-16). **Correção aberta no PR #34 (26/11/2026), aguardando revisão e merge** (ver `ExecutaCenarioBootIdTests`) | `ExecutaCenario` gera por padrão `bootId = UUID` (36 caracteres). A API exige 8 hex (`LeituraRequest`: `[0-9A-Fa-f]{8}`) e responde **400 em 100% dos envios**; nada é gravado. Reproduzido nos 4 cenários. O exemplo da própria `docs/cenarios-controlados.md` (`--boot-id=cenario-fixado-01`) também dá 400. Com `--boot-id=a1b2c3d4` dá 201. **Por que o CI não pegou [Certo]:** o único teste do gerador de cenários (`SequenciaDeterministicaTests`) usa `bootId = "boot-teste"` e só olha o JSON gerado; nenhum teste envia a sequência para o `POST /api/leituras`. |
-| DOC-1 | Média | `docs/cenarios-controlados.md` diz que `CHUVA_MODERADA` dá `SUBINDO`. Com os 60 passos padrão o nível bate em 50 cm por volta do passo 40 e a janela final (5 leituras) fica plana: a tendência termina `ESTAVEL`. Com 20 passos dá `SUBINDO`. |
-| QUIRK-1 | Baixa | `DRENAGEM_LENTA` publica 180 registros com timestamps ao longo de ~60 min **a partir de agora**, ou seja, no futuro. O dashboard mostrou "Última atualização 20:24" às 19:28. |
+| **BUG-1** | **Alta** (bloqueava o SW-16). **Corrigido: PR #34 mergeado em 26/11/2026 (`4d214c1`)**, com o teste de regressão `ExecutaCenarioBootIdTests` | `ExecutaCenario` gerava por padrão `bootId = UUID` (36 caracteres). A API exige 8 hex (`LeituraRequest`: `[0-9A-Fa-f]{8}`) e respondia **400 em 100% dos envios**; nada é gravado. Reproduzido nos 4 cenários. O exemplo da própria `docs/cenarios-controlados.md` (`--boot-id=cenario-fixado-01`) também dá 400. Com `--boot-id=a1b2c3d4` dá 201. **Por que o CI não pegou [Certo]:** o único teste do gerador de cenários (`SequenciaDeterministicaTests`) usa `bootId = "boot-teste"` e só olha o JSON gerado; nenhum teste envia a sequência para o `POST /api/leituras`. |
+| DOC-1 | Média (**correção no PR #37, aberto**) | `docs/cenarios-controlados.md` dizia que `CHUVA_MODERADA` dá `SUBINDO`. Com os 60 passos padrão o nível bate em 50 cm por volta do passo 40 e a janela final (5 leituras) fica plana: a tendência termina `ESTAVEL`. Com 20 passos dá `SUBINDO`. |
+| QUIRK-1 | Baixa (**registrado como limitação no PR #37, aberto**) | `DRENAGEM_LENTA` publica 180 registros com timestamps ao longo de ~60 min **a partir de agora**, ou seja, no futuro. O dashboard mostrou "Última atualização 20:24" às 19:28. |
 | QUIRK-2 | Baixa | No perfil `simulacao`, a tendência vira "Sem dados recentes" depois de 15 s sem leitura nova (esperado pela regra, mas confunde numa demonstração): publicar e olhar logo em seguida. |
 | ATENÇÃO | — | `GET /api/jardins` (lista) **não traz** `tendencia`; só `GET /api/jardins/{id}` traz. Confirmar se o dashboard da rede deveria depender disso. |
