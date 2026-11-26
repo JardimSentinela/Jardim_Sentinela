@@ -107,13 +107,18 @@ Jardim sem nenhuma leitura ainda → **404** com corpo JSON padronizado
 (`erro: "JARDIM_NAO_ENCONTRADO"`, ver "Erros" abaixo). O dashboard precisa
 tratar esse caso (jardim cadastrado mas ainda sem dado é diferente de erro).
 
-### `GET /api/jardins/{id}/leituras?limite=N` — histórico
+### `GET /api/jardins/{id}/leituras?limite=N&incluirBoot=false` — histórico
 
 Mais recente primeiro (chave de ordenação acima). `limite` é opcional (padrão 100, máximo 1000 —
 valores fora da faixa são ajustados, nunca dá erro por causa do `limite`).
 
+`incluirBoot` é opcional (padrão `true`). Com `false`, o endpoint exclui o registro de
+inicialização (`tipo: "boot"`), que traz nível fictício e não é medição. O padrão `true`
+preserva o contrato anterior; o dashboard do SW-18 usa `false` para não desenhar uma queda
+falsa no gráfico nem exportá-la no CSV.
+
 ```bash
-curl "http://localhost:8080/api/jardins/J01/leituras?limite=5"
+curl "http://localhost:8080/api/jardins/J01/leituras?limite=5&incluirBoot=false"
 ```
 
 ```json
