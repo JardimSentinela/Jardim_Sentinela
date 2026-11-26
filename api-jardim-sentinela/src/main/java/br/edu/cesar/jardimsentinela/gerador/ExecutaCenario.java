@@ -10,7 +10,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * CLI dos cenários controlados do [SCRUM-32][SW-16].
@@ -24,9 +23,10 @@ import java.util.UUID;
  * {@code --tempo-real} para esperar o intervalo entre envios e {@code --dry-run}
  * para apenas imprimir o JSON.
  *
- * Cada execução gera um {@code bootId} novo e reinicia o {@code seq} em zero:
- * esse é o reset do cenário. Para reproduzir exatamente a mesma sequência,
- * informe {@code --boot-id}, {@code --seed} e {@code --inicio}.
+ * Cada execução gera um {@code bootId} novo (8 caracteres hexadecimais, o formato que
+ * a API aceita) e reinicia o {@code seq} em zero: esse é o reset do cenário. Para
+ * reproduzir exatamente a mesma sequência, informe {@code --boot-id} (também com
+ * 8 hexadecimais), {@code --seed} e {@code --inicio}.
  */
 public final class ExecutaCenario {
 
@@ -51,7 +51,17 @@ public final class ExecutaCenario {
         Instant inicio = opcoes.containsKey("inicio")
                 ? Instant.parse(opcoes.get("inicio"))
                 : Instant.now().truncatedTo(ChronoUnit.SECONDS);
-        String bootId = opcoes.getOrDefault("boot-id", UUID.randomUUID().toString());
+        String bootId;
+        try {
+            bootId = opcoes.containsKey("boot-id")
+                    ? validarBootId(opcoes.get("boot-id"))
+                    : bootIdPadrao();
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            imprimirUso();
+            System.exit(1);
+            return;
+        }
 
         SequenciaDeterministica.Configuracao config = new SequenciaDeterministica.Configuracao(
                 cenario, jardimId, sensorId, semente, inicio, passos, bootId);
@@ -99,6 +109,30 @@ public final class ExecutaCenario {
         }
     }
 
+    /**
+     * Formato que {@code POST /api/leituras} aceita para {@code bootId}
+     * ({@code LeituraRequest}): exatamente 8 caracteres hexadecimais.
+     */
+    private static final String FORMATO_BOOT_ID = "[0-9A-Fa-f]{8}";
+
+    /**
+     * {@code bootId} novo para cada execução, já no formato da API. Antes era um UUID de 36
+     * caracteres, e a API recusava todos os envios com HTTP 400.
+     */
+    static String bootIdPadrao() {
+        return String.format("%08x", java.util.concurrent.ThreadLocalRandom.current().nextInt());
+    }
+
+    /** Confere o {@code --boot-id} informado antes de gerar ou enviar qualquer coisa. */
+    static String validarBootId(String bootId) {
+        if (bootId == null || !bootId.matches(FORMATO_BOOT_ID)) {
+            throw new IllegalArgumentException(
+                    "--boot-id invalido: '" + bootId + "'. A API exige exatamente 8 caracteres "
+                            + "hexadecimais (ex.: a1b2c3d4).");
+        }
+        return bootId;
+    }
+
     private static String sensorPadrao(String jardimId) {
         return jardimId.matches("J\\d{2}") ? "S" + jardimId.substring(1) : "S01";
     }
@@ -126,7 +160,7 @@ public final class ExecutaCenario {
                   --cenario=CHUVA_MODERADA|CHUVA_INTENSA|SATURACAO|DRENAGEM_LENTA
                   --jardim=J01 (padrao J01)   --sensor=S01 (padrao derivado do jardim)
                   --seed=7                    --inicio=2026-11-21T10:00:00Z
-                  --passos=60                 --boot-id=<uuid>
+                  --passos=60                 --boot-id=a1b2c3d4 (8 hexadecimais)
                   --url=http://localhost:8080/api/leituras
                   --dry-run                   --tempo-real                  --reset
                 Exemplo:

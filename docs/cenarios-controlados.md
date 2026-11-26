@@ -26,7 +26,11 @@ a `develop` atual, já com essas dependências.
   é apagado; a SW-14 ignora registros `boot`.
 - Cada execução com `--inicio`, `--seed` e `--boot-id` iguais reproduz a mesma
   sequência. Sem esses parâmetros, o início é o instante atual e o `bootId` é
-  um UUID novo.
+  novo a cada execução.
+- O `bootId` tem **exatamente 8 caracteres hexadecimais** (ex.: `a1b2c3d4`), que
+  é o formato aceito por `POST /api/leituras`. O `--boot-id` informado fora desse
+  formato é recusado pelo runner antes de enviar qualquer coisa. Um UUID ou um
+  texto livre (como `cenario-fixado-01`) era recusado pela API com HTTP 400.
 
 | Cenário | Nível inicial | Variação | Intervalo | Passos padrão | Resultado esperado |
 |---|---|---|---|---|---|
@@ -68,7 +72,7 @@ Reproduzir a mesma sequência de novo (mesmo `bootId`, seed e instante):
 ```bash
 java -cp target/classes br.edu.cesar.jardimsentinela.gerador.ExecutaCenario \
   --cenario=CHUVA_MODERADA --jardim=J01 \
-  --boot-id=cenario-fixado-01 --seed=7 --inicio=2026-11-21T10:00:00Z
+  --boot-id=a1b2c3d4 --seed=7 --inicio=2026-11-21T10:00:00Z
 ```
 
 Use `--tempo-real` para esperar o intervalo entre envios, e `--url=` para
