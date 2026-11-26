@@ -90,6 +90,17 @@ describe('API do Jardim Sentinela', () => {
     )
   })
 
+  it('pede ao backend para excluir o boot do histórico do dashboard', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(resposta([leitura]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(fetchHistorico('J01', 30, false)).resolves.toEqual([leitura])
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/api/jardins/J01/leituras?limite=30&incluirBoot=false`,
+      expect.anything(),
+    )
+  })
+
   it('busca todas as leituras em GET /api/leituras', async () => {
     const fetchMock = vi.fn().mockResolvedValue(resposta([leitura]))
     vi.stubGlobal('fetch', fetchMock)

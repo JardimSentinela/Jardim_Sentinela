@@ -130,14 +130,22 @@ export async function fetchJardim(id: string): Promise<JardimResponse> {
   return requisitar<JardimResponse>(`/api/jardins/${encodeURIComponent(id)}`)
 }
 
-/** Busca o histórico de um jardim (`GET /api/jardins/{id}/leituras?limite=N`). */
+/**
+ * Busca o histórico de um jardim (`GET /api/jardins/{id}/leituras?limite=N`).
+ *
+ * `incluirBoot=false` exclui o registro de inicialização (`tipo: "boot"`), que
+ * traz nível fictício e não é medição. O dashboard usa `false`; o padrão `true`
+ * preserva o contrato anterior para outros consumidores.
+ */
 export async function fetchHistorico(
   id: string,
   limite = 100,
+  incluirBoot = true,
 ): Promise<Leitura[]> {
   const limiteNormalizado = Math.min(1000, Math.max(1, Math.trunc(limite) || 1))
+  const parametroBoot = incluirBoot ? '' : '&incluirBoot=false'
   const dados = await requisitar<unknown>(
-    `/api/jardins/${encodeURIComponent(id)}/leituras?limite=${limiteNormalizado}`,
+    `/api/jardins/${encodeURIComponent(id)}/leituras?limite=${limiteNormalizado}${parametroBoot}`,
   )
   return exigirLista<Leitura>(dados, `o histórico do jardim ${id}`)
 }

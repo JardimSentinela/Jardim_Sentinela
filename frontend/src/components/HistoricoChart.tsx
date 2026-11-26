@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import { ArrowUp, Check, ChevronDown, Download, RefreshCw } from 'lucide-react'
 import RotuloBarra from './RotuloBarra'
+import { calcularDominioEixoY } from './historicoChartUtils'
 import { NIVEL_MAXIMO_JARDIM_CM, formatarDataHora } from '../types/jardim'
 import type { Leitura } from '../types/jardim'
 
@@ -39,7 +40,11 @@ interface PontoHistorico {
 const JANELAS = [
   { id: '10', rotulo: 'Últimas 10 leituras', limite: 10 },
   { id: '20', rotulo: 'Últimas 20 leituras', limite: 20 },
-  { id: 'todas', rotulo: 'Todas as leituras', limite: Number.POSITIVE_INFINITY },
+  {
+    id: 'todas',
+    rotulo: 'Todas as leituras carregadas',
+    limite: Number.POSITIVE_INFINITY,
+  },
 ] as const
 
 type JanelaId = (typeof JANELAS)[number]['id']
@@ -92,9 +97,23 @@ export default function HistoricoChart({
     () => (pontos.length > 0 ? Math.max(0, ...pontos.map((p) => p.nivelCm)) : 0),
     [pontos],
   )
-  const dominioMax = Math.max(NIVEL_MAXIMO_JARDIM_CM, Math.ceil(maximoPonto))
+  const dominioMax = calcularDominioEixoY(maximoPonto)
 
   const larguraMinima = Math.max(620, pontos.length * 64)
+
+  const totalCarregado = historico.length
+  let textoResumo: string
+  if (error && pontos.length === 0) {
+    textoResumo = 'Não foi possível carregar as leituras deste jardim.'
+  } else if (error && pontos.length > 0) {
+    textoResumo = `${pontos.length} leitura(s) em exibição. Última atualização falhou.`
+  } else if (pontos.length === 0) {
+    textoResumo = 'Ainda não há leituras recebidas da API para este jardim.'
+  } else if (pontos.length === totalCarregado) {
+    textoResumo = `${pontos.length} leitura(s) recebida(s) da API, da mais antiga para a mais recente.`
+  } else {
+    textoResumo = `${pontos.length} de ${totalCarregado} leitura(s) carregada(s), da mais antiga para a mais recente.`
+  }
 
   useEffect(() => {
     function aoClicarFora(evento: MouseEvent) {
@@ -151,13 +170,7 @@ export default function HistoricoChart({
             Histórico de Variação do Nível da Água
           </h2>
           <p className="mt-1 text-sm text-[var(--cor-texto-suave)]">
-            {error && pontos.length === 0
-              ? 'Não foi possível carregar as leituras deste jardim.'
-              : error && pontos.length > 0
-                ? `${pontos.length} leitura(s) em exibição. Última atualização falhou.`
-                : pontos.length > 0
-                  ? `${pontos.length} leitura(s) recebida(s) da API, da mais antiga para a mais recente.`
-                  : 'Ainda não há leituras recebidas da API para este jardim.'}
+            {textoResumo}
           </p>
         </div>
 
