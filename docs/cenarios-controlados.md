@@ -34,8 +34,8 @@ a `develop` atual, já com essas dependências.
 
 | Cenário | Nível inicial | Variação | Intervalo | Passos padrão | Resultado esperado |
 |---|---|---|---|---|---|
-| `CHUVA_MODERADA` | 10 cm | +1,0 cm/leitura ±0,2 | 3 s | 60 | tendência `SUBINDO` |
-| `CHUVA_INTENSA` | 5 cm | +2,5 cm/leitura ±0,3 | 3 s | 30 | sobe rápido até o teto |
+| `CHUVA_MODERADA` | 10 cm | +1,0 cm/leitura ±0,2 | 3 s | 60 | sobe até o teto de 50 cm. Tendência `SUBINDO` enquanto sobe (verificado com 20 a 40 passos); com os 60 padrão termina parado em 50 cm e a tendência é `ESTAVEL` |
+| `CHUVA_INTENSA` | 5 cm | +2,5 cm/leitura ±0,3 | 3 s | 30 | sobe rápido até o teto de 50 cm. Tendência `SUBINDO` enquanto sobe (verificado com 8, 12 e 16 passos); com os 30 padrão termina parado em 50 cm e a tendência é `ESTAVEL` |
 | `SATURACAO` | 46 cm | +1,0 cm/leitura | 3 s | 30 | para em 50 cm e fica lá |
 | `DRENAGEM_LENTA` | 45 cm | −0,1 cm a cada 2 leituras | 20 s | 180 | ~0,15 cm/min → `DRENAGEM_LENTA` |
 
@@ -81,11 +81,29 @@ segundos com timestamps ao longo de ~60 min: isso evita uma apresentação de
 60 min e cabe na janela de leitura do `DrenagemService` (máximo de 200 registros
 por consulta).
 
+**Limitação conhecida (timestamps no futuro).** Sem `--inicio`, os timestamps
+começam no instante atual e avançam pelo intervalo do cenário. No cenário de
+drenagem a última leitura fica cerca de **1 h no futuro** (verificado:
+`ultimaLeituraEm` 1 h à frente do relógio). A tendência não é afetada, porque a
+idade dela usa o horário de recepção, mas o dashboard mostra "última atualização"
+no futuro e, pela regra de ordenação cronológica (`COALESCE(timestampDispositivo,
+recebidoEm)`), uma leitura real mais nova ficaria atrás dessas. Para o cenário
+terminar "agora", comece 1 h no passado (Linux ou Git Bash):
+
+```bash
+--inicio=$(date -u -d '60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+```
+
 ### O que conferir
 
 - `GET /api/jardins/J01/leituras` mostra `seq` crescente e `tipo=snapshot`.
 - `GET /api/jardins/J01/tendencia` (SW-14, já na `develop`) retorna `SUBINDO`
-  para os cenários de chuva e `ESTAVEL` para drenagem lenta — a queda é menor
+  **enquanto o nível sobe**: chuva moderada até cerca de 40 passos e chuva
+  intensa até cerca de 16. Para ver isso, use `--passos` menor que o padrão e
+  consulte logo em seguida (o limite de idade do perfil `simulacao` é 15 s; depois
+  dele a tendência vira `DESATUALIZADO`, ver `docs/tendencia-nivel.md`). Com os
+  passos padrão os dois cenários de chuva terminam parados em 50 cm, e a
+  tendência é `ESTAVEL`. Na drenagem lenta também é `ESTAVEL`: a queda é menor
   que a tolerância de 1,5 cm na janela de 5 leituras.
 - Após o merge do SCRUM-30 (SW-15), a drenagem lenta é classificada como
   `DRENAGEM_LENTA`. O serviço ainda não tem endpoint, então a verificação é
