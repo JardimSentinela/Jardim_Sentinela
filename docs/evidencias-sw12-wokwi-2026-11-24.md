@@ -1,6 +1,6 @@
 # Evidências SW-12 — validação no Wokwi (2026-11-24)
 
-Rascunho local, NÃO commitado. Executado por Rafa (RafaCarrilho) com apoio do Claude Desktop.
+Executado por Rafa (RafaCarrilho) com apoio do Claude Desktop. Versionado neste PR (#32).
 **Resultado final:** 3.14 = **PASSOU** · 3.16 = **VALIDADO COM RESSALVAS** (validação encerrada por decisão do responsável; cenários não serão repetidos só para melhorar a captura).
 Legenda: [OBS] observado na tela por Claude · [LOG] verificado em log serial/API · [REL] relatado por Rafa · [COD] inferido pela leitura do código (não observado).
 

@@ -47,8 +47,29 @@ decisões.
 | Backend e firmware | `git diff 22e0617 8a0bd3f -- api-jardim-sentinela` e `git diff cdd6ab1 8a0bd3f -- esp32` vazios | idênticos às versões testadas na rodada anterior (antes dos merges: PR #23 em `22e0617`, PR #24 em `cdd6ab1`) |
 
 PRs ainda abertos em 23/11: #25 (develop → main, com conflitos), #26, #30
-(SW-15) e #31 (SW-16). Os dois últimos **não** foram testados aqui e podem
-alterar o contrato (eventos T1592, simulador).
+(SW-15) e #31 (SW-16). Os dois últimos **não** foram testados na rodada de 23/11 e
+podiam alterar o contrato (eventos T1592, simulador). **Hoje (26/11) os dois já estão na
+`develop`; ver §2.1.**
+
+### 2.1 Reexecução em 26/11/2026 sobre a `develop` atual (#30 e #31 incluídos)
+
+Pedido do comentário de revisão de 26/11 (Arthur) e de 25/11 (Larissa) neste PR.
+**Quem executou:** assistente de IA, a pedido da Júlia Tenório Calado, em Linux.
+
+| Item | Resultado |
+|---|---|
+| SHA testado | `f931d14` = `develop` em `5535953` (já contém #30, #31) + os 2 commits deste PR. A branch já tinha a `develop` atual incorporada (`git merge-base --is-ancestor origin/develop HEAD` = sim). Este PR só altera docs e `scripts/`, então o código da API, do frontend e do firmware é o da `develop` |
+| Ambiente | Linux 6.18, Java 21, Python 3.13, `jq` presente; API com H2 em memória e perfil `simulacao` |
+| Testes da `develop` (`5535953`) | API **198/198**, frontend **27/27** (lint e build OK), firmware **14/14** grupos e receptor OK |
+| `smoke-test-integracao.sh --autoteste-url` | **45/45** URLs classificadas corretamente |
+| `smoke-test-integracao.sh` | **69/69** asserções OK, 0 falhas, **2 achados (F1 e F2)**, 0 inconclusivos |
+| `smoke-test-integracao.sh --estrito` | exit **1** (os achados F1 e F2 contam como falha), como esperado |
+| Windows / Git Bash | **Não executado.** O smoke só foi executado em Linux; o fallback `python` no Git Bash do Windows segue **[Dado a verificar]** |
+| Wokwi e hardware | **Não reexecutados** nesta rodada (continuam valendo as evidências de 24/11, §6.4) |
+
+Os cenários controlados do #31 (`ExecutaCenario`) **não** fazem parte do smoke. Ao ensaiar
+o SW-19 foi encontrado que eles recebiam HTTP 400 por causa do formato do `bootId`;
+a correção está no PR #34.
 
 Ambiente: container Linux, Java 21, Node 22, Python 3.13, g++, Chromium
 (Playwright). Nessa rodada (23/11) Wokwi, PlatformIO e hardware estavam **indisponíveis**; o Wokwi foi executado depois, em 24/11, na máquina do responsável (§6.4).
@@ -140,6 +161,8 @@ Todos foram **verificados novamente** no HEAD. Nenhum foi corrigido.
   como alternativa, então só ocorre sem sincronização. Não verificado no Wokwi.
 - **Responsável:** API (SW-14, Júlia) + decisão do grupo. Contrato §3.4 já
   registra "em aberto: tratar `horaSincronizada:false`".
+- **Issue:** a decisão deve ser registrada na [#29](https://github.com/JardimSentinela/Jardim_Sentinela/issues/29),
+  item "Tratamento de `horaSincronizada: false`" (a API ainda ignora o campo).
 - **Correção mínima sugerida:** o grupo decide a regra (por exemplo, ordenar por
   `recebidoEm` quando `horaSincronizada=false`); depois, um teste que reproduza a
   sequência acima.
@@ -153,10 +176,21 @@ Todos foram **verificados novamente** no HEAD. Nenhum foi corrigido.
   **reproduzido enviando o registro por POST**. **Não foi medido** se o firmware
   chega a gerar esse caso: o boot é gravado no início do boot, possivelmente
   antes de o relógio sincronizar (hora estimada, situação do F1); nesse caso o
-  boot teria timestamp antigo e **não** apareceria como leitura atual. O boot
-  **já** é excluído da tendência e do campo `estado`; o dicionário diz que
-  `totalLeituras` inclui o boot e que `nivelCm` é "o da última leitura", então
-  o comportamento segue o texto.
+  boot teria timestamp antigo e **não** apareceria como leitura atual.
+- **O que o boot já não afeta na `develop` atual (verificado no código):** o campo
+  `estado` (consultas `findComEstadoElegivel` e `findUltimoEstadoValidoDeCadaJardim`) e a
+  tendência.
+- **O que ainda é afetado:** `nivelCm` e `ultimaLeituraEm`, que vêm de `findHistorico`
+  (detalhe) e `findUltimaLeituraDeCadaJardim` (lista), e **não** excluem o boot. Por isso
+  `GET /api/jardins/{id}` e `GET /api/jardins` ainda podem devolver `nivelCm: 0.0` quando o
+  boot é o registro mais recente. O dicionário diz que `totalLeituras` inclui o boot e que
+  `nivelCm` é "o da última leitura", então o comportamento segue o texto.
+- **Relação com o PR #33 (SW-18, ainda aberto):** ele adiciona `incluirBoot=false` só ao
+  **histórico** (gráfico e CSV). Detalhe e lista **não mudam**, então o F2 continua aberto
+  mesmo se o #33 for mergeado.
+- **Issue:** a [#29](https://github.com/JardimSentinela/Jardim_Sentinela/issues/29) só menciona
+  o boot em "registros legados sem `tipo`". Este ponto (boot como leitura atual) **não está
+  listado nela**; sugere-se acrescentá-lo lá para a decisão ficar registrada.
 - **Responsável:** API (Júlia).
 - **Correção mínima sugerida:** ignorar `tipo=boot` na consulta da "última
   leitura" (detalhe e lista) e ajustar o dicionário; `totalLeituras` continua
@@ -187,6 +221,9 @@ Todos foram **verificados novamente** no HEAD. Nenhum foi corrigido.
 - **Impacto:** o dashboard e o totem podem discordar para o mesmo nível. O texto
   do card ("Sensor do totem físico … identifica nível em elevação") afirma algo
   sobre o totem mesmo quando o estado foi calculado localmente.
+- **Dono proposto (a confirmar pelo grupo):** a Larissa se ofereceu, em comentário de 25/11
+  neste PR, para alinhar o frontend aos limiares do firmware (22/45/60 cm). **Ainda não foi
+  decidido qual tabela vale.**
 - **Responsável:** frontend (Larissa) e simulador/API (Júlia, Arthur). Os limiares
   do firmware estão marcados como **PROVISÓRIOS** em comentário de
   `esp32/src/modulos/estado_fisico.h` (o comentário remete a
