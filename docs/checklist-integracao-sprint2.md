@@ -7,6 +7,12 @@
 > de teste.
 > **Dependências:** SW-06, SW-07, SW-08, SW-09, SW-11, DS-02.
 
+> **Atualização de 23/11/2026:** as seções 0 a 5 abaixo são o **registro
+> histórico da Sprint 2 (14/11)** e foram mantidas como estavam. A rodada de
+> validação sobre a `develop` atual e o dashboard do PR #26 está na
+> **seção 6**; o relatório técnico completo está em
+> [`relatorio-integracao-sw12.md`](relatorio-integracao-sw12.md).
+
 Este documento mapeia as 5 subtarefas sugeridas do card ao estado real do
 código em `develop` (analisado via Jira + repositório GitHub, sem acesso ao
 computador local de ninguém — qualquer item marcado **[Dado a verificar]**
@@ -86,7 +92,11 @@ de `persistir()` no firmware), com os dois vocabulários, estão em
 
 ## 4. Testar consumo inicial pelo código gerado
 
-**Bloqueado:** DS-02 ("Finalizar dashboard e gerar código-base") está "Em
+> **[Superado em 23/11/2026]** O dashboard existe (PR #19 na `develop`; PR #26
+> conectado à API) e foi exercitado no navegador contra a API real. Ver seção 6.
+> O texto abaixo é o registro de 14/11.
+
+**Bloqueado (em 14/11):** DS-02 ("Finalizar dashboard e gerar código-base") está "Em
 andamento" com a Adrielly — ainda não existe código gerado pra testar
 consumindo a API de verdade. O que dá pra adiantar sem o código gerado
 existir:
@@ -128,3 +138,89 @@ são meus pra decidir):**
    fluxo do time é mergear em `develop` e só promover pra `main` "em última
    instância"; isso inverteu. Só percebi o `TratadorDeErros.java` porque
    fui atrás; pode haver mais coisa de main p/ conferir.
+
+---
+
+## 6. Rodada de 23/11/2026 — `develop` atual + dashboard do PR #26
+
+> Registro novo. Não substitui as seções 0 a 5 (histórico de 14/11).
+> Detalhes, comandos, achados e passos para o Wokwi:
+> [`relatorio-integracao-sw12.md`](relatorio-integracao-sw12.md).
+
+### 6.1 Versões testadas
+
+| Componente | Referência | SHA |
+|---|---|---|
+| `develop` (com #19, #22, #23, #24, #28) | `origin/develop` | `d13d021` |
+| Dashboard conectado à API | PR #26 (HEAD) | `8a0bd3f` |
+| Relação | `develop` é ancestral do #26; o #26 tem 8 commits próprios, só em `frontend/` | — |
+| Backend e firmware | `api-jardim-sentinela/` e `esp32/` no #26 são idênticos à `develop` | — |
+
+Ambiente: container Linux, Java 21, Node 22, Python 3.13, g++, Chromium
+(Playwright). Bancos H2 descartáveis (memória; arquivo temporário só no teste de
+persistência). Nessa rodada de 23/11 Wokwi, PlatformIO e hardware **não foram executados** (sondagens
+sem resposta). O Wokwi foi executado em **24/11/2026** na máquina do responsável: ver 6.4.
+
+### 6.2 Execuções (HEAD `8a0bd3f`)
+
+| Teste | Resultado | Observação |
+|---|---|---|
+| API: `./mvnw -B -ntp test` | **180/180** | CI (execução nº 14 do #26) também verde |
+| Frontend: `npm ci`, `npm test`, `npm run lint`, `npm run build` | **27/27**, lint e build OK | testes com API mockada; CI verde |
+| Firmware (host): `python3 test/host/run_tests.py --verbose` | **14/14 grupos** | não é Wokwi nem ESP32 |
+| Firmware (receptor): `python3 test/receiver/test_receber.py` | **OK** | não é Wokwi |
+| Smoke **original** (timestamp fixo de 04/11) | 9 OK, **2 FALHAS** (passos 5 e 6) | expectativa do script contraria o contrato §3.4 |
+| Smoke **novo** (`scripts/smoke-test-integracao.sh`) | **69/69** (com `jq` e com `python3`), 2 achados (F1, F2) | `--estrito` falha pelos achados |
+| Validação de URL do smoke (`--autoteste-url`) | **45/45** | URLs com `@`, caminho, `file://` etc. recusadas; **0 chamadas** de `curl` antes da recusa |
+| Controle negativo do smoke (servidor falso) | 52 falhas, exit 1 | o script não passa em branco |
+| Simulador J01–J04 → API → dashboard, no navegador | OK | ver 6.3 |
+| Persistência após reiniciar a API (H2 em arquivo) | OK | leitura mantida; retransmissão `bootId+seq` devolve 200 |
+| JSON real do gateway do firmware → API (42,5 cm) | OK | 201; reenvio 200; 42,5 preservado |
+
+### 6.3 Integração real (separada por tipo)
+
+- **Componentes isolados:** API, frontend e firmware (host), tabela acima.
+- **Frontend ↔ backend reais (navegador):** J01–J04 com nível, estado,
+  tendência e última atualização vindos da API; o nível exibido bate com as
+  últimas leituras da API em todos os jardins; `estado` enviado pelo dispositivo
+  tem prioridade sobre o cálculo local; CORS presente em todas as respostas;
+  API fora → aviso e último dado mantido; API de volta → recupera sem recarregar.
+- **Simulador:** J01–J04 aceitos (HTTP 201) e persistidos.
+- **Firmware → API:** apenas o JSON gerado pelo código real do gateway
+  (harness em C++), postado na API. **Não** é Wokwi.
+- **Wokwi → API Spring Boot real (firmware atual):** **não executado.**
+
+### 6.4 Wokwi em 24/11/2026 (substitui os bloqueios de 23/11)
+
+Bloqueios de 23/11 (`wokwi-cli`, `pio`, token, rede do ambiente Linux) deixaram de
+valer: a execução foi na máquina do responsável, com PlatformIO e extensão Wokwi para
+VS Code (Private Gateway embutido). Detalhes e origem de cada evidência em
+[`evidencias-sw12-wokwi-2026-11-24.md`](evidencias-sw12-wokwi-2026-11-24.md) e
+`relatorio-integracao-sw12.md` §6.4.
+
+| Cenário | Resultado |
+|---|---|
+| 3.14 nível 42,5 cm sem arredondar para 43 | **PASSOU** (log `42.52 cm`; API `nivelCm: 42.5`) |
+| 3.16 totem sem receptor | **VALIDADO COM RESSALVAS** |
+
+Ressalvas do 3.16: buzzer só com relato auditivo e log `som=` (cadência não
+verificada); piscar do vermelho não capturado dentro da janela exata do bloqueio
+(inferido pelo código: tarefa FreeRTOS própria); só simulador, nunca hardware real.
+
+### 6.5 Critérios de aceite
+
+| Critério | Situação em 23/11/2026 |
+|---|---|
+| Simulador alimenta a API | **Validado** |
+| Dados persistem | **Validado** |
+| Endpoints respondem | **Validado** (smoke novo: 69/69) |
+| Interface consome dados de teste | **Validado** (#26 + API real, no navegador) |
+| Wokwi alimenta a API | **Validado em 24/11** (3.14 passou; 3.16 com ressalvas, ver 6.4) |
+
+### 6.6 Achados abertos (resumo)
+
+F1 reinício com hora estimada, F2 `boot` como leitura atual, F3 limiares de
+estado divergentes (frontend × firmware), F4 aviso "API indisponível" em 404 e
+dado antigo mantido, F5 polling duplicado, F6 rótulos do gráfico. Evidência
+reproduzível, impacto, prioridade e responsável em
+`relatorio-integracao-sw12.md` §4.

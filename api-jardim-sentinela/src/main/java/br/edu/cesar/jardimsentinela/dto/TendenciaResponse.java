@@ -24,7 +24,8 @@ import br.edu.cesar.jardimsentinela.tendencia.Tendencia;
  * @param idadeMaximaSegundos              idade máxima usada para DESATUALIZADO, em segundos
  *                                        (configuração; PROVISÓRIO, ver docs/decisoes-tecnicas.md §5.2).
  * @param confiabilidadeCronologia        sempre {@code "NAO_VALIDADA"} neste MVP: a API
- *                                        ainda não persiste bootId, seq e horaSincronizada.
+ *                                        persiste bootId e seq (idempotência), mas ainda
+ *                                        ignora horaSincronizada (issue #29).
  * @param semTimestampDispositivoNaJanela sinal informativo; não prova confiabilidade.
  * @param multiplosSensorId               sinal informativo; não prova mistura de tecnologias.
  * @param ultimaRecepcaoEm                maior recebidoEm entre as leituras válidas: o
