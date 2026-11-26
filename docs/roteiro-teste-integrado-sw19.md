@@ -54,13 +54,32 @@ cd frontend && npm ci && VITE_API_BASE_URL=http://localhost:8080 npm run dev
 
 ---
 
+## Dependência do PR #33 (SW-18)
+
+Em 26/11/2026 o PR #33 ainda **não** estava na `develop`. Sem ele, estes itens **não** fecham, e isso
+**não é falha do código da `develop`**: o roteiro cobra comportamentos que o #33 traz.
+
+| Item | O que o #33 traz |
+|---|---|
+| A3 | os 23 testes novos do frontend (27 → 50) |
+| B9 | o parâmetro `incluirBoot` no histórico |
+| C3 | o dashboard pedir o histórico com `incluirBoot=false` e limite 100 |
+| C4 | o histórico sem o registro de boot |
+| C5 | o aviso "Última atualização falhou" mantendo os últimos dados |
+| C6 | o 404 de jardim sem leitura tratado como estado vazio, sem banner |
+
+Resultado do ensaio de 26/11: **todos passaram com o #33 mesclado** (o B9 e o C4 com as ressalvas
+descritas no relatório) e falharam sem ele (`docs/relatorio-ensaio-sw19-2026-11-26.md`). **Faça o SW-19 depois do merge do #33.**
+
+---
+
 ## A. Portão automatizado (precisa passar antes de B e C)
 
 | ID | Comando | Esperado (objetivo) | Evidência |
 |---|---|---|---|
-| A1 | `cd api-jardim-sentinela && ./mvnw -B -ntp test` | `Failures: 0, Errors: 0`; **≥ 200** testes (hoje 200 com #33) | cole o resumo `Tests run:` |
+| A1 | `cd api-jardim-sentinela && ./mvnw -B -ntp test` | `Failures: 0, Errors: 0`; **≥ 200** testes (204 na `develop` em 26/11; 206 com o PR #33) | cole o resumo `Tests run:` |
 | A2 | `cd frontend && npm ci && npm run lint` | exit 0 | exit code |
-| A3 | `cd frontend && npm test` | exit 0; **≥ 50** testes em 7 arquivos | resumo do Vitest |
+| A3 | `cd frontend && npm test` | exit 0; **≥ 50** testes em 7 arquivos **(só com o PR #33; sem ele são 27 testes em 6 arquivos)** | resumo do Vitest |
 | A4 | `cd frontend && npm run build` | exit 0 (aviso de chunk > 500 kB é conhecido e não reprova) | exit code |
 | A5 | `cd esp32 && python3 test/host/run_tests.py --verbose` | `Resumo: 14/14 grupos OK` | linha do resumo |
 | A6 | `cd esp32 && python3 test/receiver/test_receber.py` | `OK` | saída |
@@ -89,7 +108,7 @@ Rodar na ordem. Cada `ExecutaCenario` usa:
 | **B7** | `--cenario=SATURACAO --jardim=J04 --boot-id=0a0a0a04` | 31 × `HTTP 201`; `nivelCm` = **50.0**. |
 | **B8** | `--cenario=DRENAGEM_LENTA --jardim=J03 --boot-id=0a0a0a03` | **181** × `HTTP 201`; `GET /api/jardins/J03` com `totalLeituras` = **181**. |
 | B8a | `./mvnw -B -ntp test -Dtest='DetectorDrenagemLentaTest,DrenagemServiceTests'` | `Failures: 0`. A regra **não tem endpoint** (decisão do Arthur, SW-15): a verificação é pelos testes, **não** pelo dashboard. |
-| **B9 (boot fora do histórico)** | `curl -s 'localhost:8080/api/jardins/J01/leituras?limite=200'` e a mesma URL com `&incluirBoot=false` | a 1ª lista tem **1 registro a mais** que a 2ª; na 2ª **nenhum** registro com `nivelCm == 0.0`. |
+| **B9 (boot fora do histórico)** | `curl -s 'localhost:8080/api/jardins/J01/leituras?limite=200'` e a mesma URL com `&incluirBoot=false` | **Requer o PR #33** (sem ele o parâmetro `incluirBoot` é ignorado e as duas listas são iguais: registrar como **N/E, depende do #33**, não como falha da API). Com o #33: a 1ª lista tem **tantos registros a mais quanto boots** enviados ao jardim (um por `--boot-id` diferente; só o B3 = **1**); na 2ª **nenhum** registro com `nivelCm == 0.0`. Faça o B9 **antes** de publicar outro `--boot-id` no J01. |
 | **B10** | `curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/jardins/J99` | `404`. |
 | **B11** | `bash scripts/smoke-test-integracao.sh` (banco descartável!) | **69/69** e **2 achados informativos** (F1 e F2). Com `--estrito` o exit é 1 **hoje**, por causa de F1/F2: registrar como "achado em aberto", não como regressão. |
 
@@ -102,12 +121,12 @@ O dashboard precisa mostrar o **mesmo** que a API devolve. Conferir com `curl` a
 | ID | Passo | Esperado (objetivo) |
 |---|---|---|
 | **C1** | Abrir `http://localhost:5173` depois do bloco B | "Conectado à API Java"; J01–J04 com nível igual ao `nivelCm` da API (J01 50 cm, J02 50 cm, J03 36 cm, J04 50 cm no ensaio de 26/11). |
-| **C2 (polling)** | Selecionar J01, publicar `--cenario=CHUVA_MODERADA --jardim=J01 --boot-id=0a0a0a11 --passos=10` **sem recarregar a página**; esperar ≤ 10 s | o card de J01 muda para o novo `nivelCm` e "Última atualização" avança. Se não mudar: FALHA. |
-| **C3** | Aba Network: a chamada do histórico | `GET /api/jardins/J01/leituras?limite=100&incluirBoot=false` com status **200** (confirma o #33). |
-| **C4 (sem boot)** | Olhar o gráfico e baixar o CSV | **nenhuma** barra/linha em 0 cm e **nenhuma** linha `0.0` no CSV. |
-| **C5 (API fora)** | Parar a API, esperar 10 s, olhar a tela | os últimos dados **continuam** com o aviso "Última atualização falhou". Subir a API e clicar em "Tentar novamente": aviso some **sem recarregar a página**. |
-| **C6 (estado vazio)** | Com o banco novo (sem dados de J04), selecionar J04 | "Sem leituras recebidas" e **nenhum** banner vermelho. |
-| C7 | Console do navegador durante C1–C6 | **zero** erros. |
+| **C2 (polling)** | Selecionar J01, publicar `--cenario=CHUVA_MODERADA --jardim=J01 --boot-id=0a0a0a11 --passos=10` **sem recarregar a página**; esperar ≤ 10 s. **Atenção ao horário:** os cenários sem `--inicio` publicam timestamps até ~1 min **à frente**, e uma rodada nova logo depois, no mesmo jardim, **fica escondida** (medido em 26/11: `nivelCm` 29,9 antes e depois). Publique os dados-base do bloco C com `--inicio=$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ)` ou espere ~1 min antes do C2 | o card de J01 muda para o novo `nivelCm` e "Última atualização" avança. Se não mudar: FALHA. |
+| **C3** | Aba Network: a chamada do histórico | `GET /api/jardins/J01/leituras?limite=100&incluirBoot=false` com status **200**. **Requer o PR #33** (sem ele a chamada é `?limite=30`, sem `incluirBoot`). |
+| **C4 (sem boot)** | **Use um jardim com poucas leituras** (menos que a janela de 20 do gráfico). Depois do C6, publique no J04: `--cenario=SATURACAO --jardim=J04 --boot-id=0a0a0a04 --passos=5 --inicio=<5 min atrás>` (1 boot + 5 snapshots), selecione J04 e clique em "Baixar Histórico" | **Requer o PR #33.** CSV com **5 linhas** e **nenhuma** com nível 0; **nenhuma** barra em 0 cm. Sem o #33 o CSV tem **6 linhas, uma com 0** (isso prova que o teste consegue falhar). Com um jardim de mais de 20 leituras o boot, que é o mais antigo, sai da janela e o teste passa sem provar nada. |
+| **C5 (API fora)** | Parar a API, esperar 10 s, olhar a tela | os últimos dados **continuam** com o aviso "Última atualização falhou". Subir a API e clicar em "Tentar novamente": aviso some **sem recarregar a página**. **O aviso requer o PR #33**: sem ele os dados ficam, mas não há aviso. |
+| **C6 (estado vazio)** | Com o banco novo (sem dados de J04), selecionar J04 | "Sem leituras recebidas" e **nenhum** banner vermelho. **Requer o PR #33** (sem ele aparece um banner de erro no detalhe). |
+| C7 | Console do navegador durante C1–C6 | **zero** erros, **exceto** os `404` que o navegador registra para jardins sem leitura (o 404 é o contrato, ver C6). Qualquer outro erro reprova. |
 | C8 | Alternar J01 → J02 → J01 três vezes rápido | o gráfico final é o do J01 (nunca mostra dado do J02). |
 
 ---
@@ -155,6 +174,10 @@ E registrado; qualquer FALHA vira bug com dono antes de o ticket ser movido para
 ---
 
 ## 6. Ensaio preliminar (26/11/2026) — NÃO é a execução oficial
+
+> **Versão posterior e mais completa:** `docs/relatorio-ensaio-sw19-2026-11-26.md` (ensaio na `develop`
+> atual e na `develop` + #33). Esta seção é a **primeira versão**, feita antes dos merges de #32, #34,
+> #35 e #37, e fica como histórico.
 
 Eu (assistente) rodei B e C em **uma cópia** do repositório fora do projeto, com `develop`
 (`5535953`) + PR #33 + PR #32 mesclados localmente (os dois mesclam sem conflito juntos).
