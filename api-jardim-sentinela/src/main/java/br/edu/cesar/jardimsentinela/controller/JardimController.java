@@ -37,8 +37,9 @@ public class JardimController {
     @GetMapping("/api/jardins/{id}/leituras")
     public ResponseEntity<List<Leitura>> buscarHistorico(
             @PathVariable String id,
-            @RequestParam(defaultValue = "" + JardimService.LIMITE_PADRAO) int limite) {
-        return ResponseEntity.ok(jardimService.buscarHistorico(id, limite)
+            @RequestParam(defaultValue = "" + JardimService.LIMITE_PADRAO) int limite,
+            @RequestParam(defaultValue = "true") boolean incluirBoot) {
+        return ResponseEntity.ok(jardimService.buscarHistorico(id, limite, incluirBoot)
                 .orElseThrow(() -> new JardimNaoEncontradoException(id)));
     }
 }

@@ -86,13 +86,21 @@ public class JardimService {
                 .toList();
     }
 
-    /** Histórico do mais recente para o mais antigo. Vazio se o jardim nunca enviou dados. */
-    public Optional<List<Leitura>> buscarHistorico(String jardimId, int limite) {
+    /**
+     * Histórico do mais recente para o mais antigo. Vazio se o jardim nunca enviou dados.
+     *
+     * [SW-18] {@code incluirBoot=false} exclui o registro de inicialização, que traz
+     * nível fictício e não é medição. O padrão {@code true} preserva o contrato
+     * anterior; o dashboard pede {@code false}.
+     */
+    public Optional<List<Leitura>> buscarHistorico(String jardimId, int limite, boolean incluirBoot) {
         if (!leituraRepository.existsByJardimId(jardimId)) {
             return Optional.empty();
         }
         int limiteEfetivo = Math.min(Math.max(limite, 1), LIMITE_MAXIMO);
-        return Optional.of(leituraRepository.findHistorico(
-                jardimId, PageRequest.of(0, limiteEfetivo)));
+        PageRequest pagina = PageRequest.of(0, limiteEfetivo);
+        return Optional.of(incluirBoot
+                ? leituraRepository.findHistorico(jardimId, pagina)
+                : leituraRepository.findHistoricoSemBoot(jardimId, pagina));
     }
 }

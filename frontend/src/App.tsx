@@ -89,11 +89,20 @@ function App() {
   const [buscaAberta, setBuscaAberta] = useState(false)
   const areaBuscaRef = useRef<HTMLDivElement>(null)
 
-  const { jardim, historico, alerta, cop, loading, error, refetch } =
-    useJardimData(jardimSelecionado, {
-      intervaloPollingMs: 5000,
-      limiteHistorico: 30,
-    })
+  const {
+    jardim,
+    historico,
+    alerta,
+    cop,
+    loading,
+    erroJardim,
+    erroHistorico,
+    semLeituras,
+    refetch,
+  } = useJardimData(jardimSelecionado, {
+    intervaloPollingMs: 5000,
+    limiteHistorico: 100,
+  })
 
   const {
     itens: itensRede,
@@ -129,7 +138,7 @@ function App() {
   }, [busca])
 
   const verificandoConexao = !jardim && (loading || loadingRede)
-  const conectado = !error && !errorRede && !verificandoConexao
+  const conectado = !erroJardim && !errorRede && !verificandoConexao
 
   function selecionarJardim(id: JardimId) {
     setJardimSelecionado(id)
@@ -182,7 +191,7 @@ function App() {
                   <select
                     value={jardimSelecionado}
                     onChange={(evento) =>
-                      setJardimSelecionado(evento.target.value as JardimId)
+                      selecionarJardim(evento.target.value as JardimId)
                     }
                     className="cursor-pointer appearance-none bg-transparent pr-5 text-sm font-semibold text-[var(--cor-texto-forte)] focus:outline-none"
                   >
@@ -280,16 +289,6 @@ function App() {
               )}
             </div>
 
-            {error && (
-              <p
-                role="alert"
-                className="mb-4 rounded-lg border border-[#f0b7a1] bg-[#fff4ef] px-3 py-2 text-sm text-[#9a3412] dark:border-[#7c2d12] dark:bg-[#3b1c12] dark:text-[#fdba74]"
-              >
-                Não foi possível atualizar o jardim {jardimSelecionado}:{' '}
-                {error.message}
-              </p>
-            )}
-
             <RedeJardins
               itens={itensRede}
               loading={loadingRede}
@@ -309,6 +308,8 @@ function App() {
                   jardim={jardim}
                   alerta={alerta}
                   loading={loading && !jardim}
+                  erro={erroJardim}
+                  semLeituras={semLeituras}
                   onTentarNovamente={() => void refetch()}
                 />
               </div>
@@ -323,6 +324,8 @@ function App() {
                 historico={historico}
                 loading={loading && historico.length === 0}
                 corDestaque={corDestaqueDoGrafico(alerta?.cor, temaEscuro)}
+                error={erroHistorico}
+                onTentarNovamente={() => void refetch()}
               />
             </div>
           </>

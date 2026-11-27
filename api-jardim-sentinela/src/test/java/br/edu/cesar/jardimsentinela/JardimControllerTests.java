@@ -15,6 +15,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import br.edu.cesar.jardimsentinela.entity.Leitura;
 import br.edu.cesar.jardimsentinela.repository.LeituraRepository;
 
 @SpringBootTest
@@ -96,5 +97,34 @@ class JardimControllerTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].nivelCm").value(3.0));
+    }
+
+    @Test
+    void historicoIncluiBootPorPadraoEExcluiQuandoSolicitado() throws Exception {
+        Instant base = Instant.parse("2026-11-12T12:00:00Z");
+        repository.save(new Leitura("J01", "S01", 0.0, 100, base, base,
+                null, null, null, "boot", "B1", 0L));
+        repository.save(new Leitura("J01", "S01", 24.0, 99, base.plusSeconds(10),
+                base.plusSeconds(10), "ENCHENDO", "SUBINDO", "v1", "snapshot", "B1", 1L));
+
+        mvc.perform(get("/api/jardins/J01/leituras"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+
+        mvc.perform(get("/api/jardins/J01/leituras").param("incluirBoot", "false"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].nivelCm").value(24.0));
+    }
+
+    @Test
+    void historicoSoComBootRespondeListaVaziaQuandoBootEhExcluido() throws Exception {
+        Instant base = Instant.parse("2026-11-12T12:00:00Z");
+        repository.save(new Leitura("J01", "S01", 0.0, 100, base, base,
+                null, null, null, "boot", "B1", 0L));
+
+        mvc.perform(get("/api/jardins/J01/leituras").param("incluirBoot", "false"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 }
