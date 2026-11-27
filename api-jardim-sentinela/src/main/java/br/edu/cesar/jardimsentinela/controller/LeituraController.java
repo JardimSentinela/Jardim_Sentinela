@@ -54,9 +54,7 @@ public class LeituraController {
             return ResponseEntity.ok(existente.get());
         }
 
-        Leitura salva;
-        try {
-            salva = leituraRepository.saveAndFlush(new Leitura(
+        Leitura nova = new Leitura(
                 leitura.jardimId(),
                 leitura.sensorId(),
                 leitura.nivelCm(),
@@ -68,7 +66,12 @@ public class LeituraController {
                 leitura.versaoRegra(),
                 leitura.tipo(),
                 bootId,
-                leitura.seq()));
+                leitura.seq());
+        nova.setHoraSincronizada(leitura.horaSincronizada());
+
+        Leitura salva;
+        try {
+            salva = leituraRepository.saveAndFlush(nova);
         } catch (DataIntegrityViolationException corrida) {
             // Mesma leitura (jardimId + bootId + seq) gravada por outra requisição no meio tempo:
             // é uma retransmissão, devolve a existente em vez de erro ou duplicata.

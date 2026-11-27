@@ -57,6 +57,9 @@ public class Leitura {
     /** Contador do registro dentro do boot. Com bootId, identifica a leitura. Nulo quando não enviado. */
     private Long seq;
 
+    /** [F1] Indica se o relógio do dispositivo estava sincronizado. False = usa recebidoEm na ordenação. */
+    private Boolean horaSincronizada;
+
     /** Valor de {@link #tipo} do registro de inicialização, que não é medição de nível. */
     public static final String TIPO_BOOT = "boot";
 
@@ -107,9 +110,11 @@ public class Leitura {
     public String getTendenciaDispositivo() { return tendenciaDispositivo; }
     public String getVersaoRegra() { return versaoRegra; }
 
-    // tipo, bootId e seq são de uso interno (elegibilidade e idempotência): ficam fora das
-    // respostas JSON para o contrato de saída da API não mudar.
+    // tipo, bootId, seq e horaSincronizada são de uso interno: ficam fora das respostas JSON
+    // para o contrato de saída da API não mudar.
     @JsonIgnore public String getTipo() { return tipo; }
     @JsonIgnore public String getBootId() { return bootId; }
     @JsonIgnore public Long getSeq() { return seq; }
+    @JsonIgnore public Boolean getHoraSincronizada() { return horaSincronizada; }
+    public void setHoraSincronizada(Boolean horaSincronizada) { this.horaSincronizada = horaSincronizada; }
 }

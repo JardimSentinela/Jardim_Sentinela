@@ -83,6 +83,15 @@ public record LeituraRequest(
 
         /** [SCRUM-28][SW-14] Contador do registro no boot (32 bits sem sinal no firmware). Opcional. */
         @PositiveOrZero @Max(4294967295L)
-        Long seq
+        Long seq,
+
+        /** [F1] Indica se o relógio do dispositivo estava sincronizado (NTP). Nulo/true = confiável; false = estimado. */
+        Boolean horaSincronizada
 ) {
+    public LeituraRequest(String jardimId, String sensorId, Double nivelCm, Integer bateria,
+            Instant timestamp, String estado, String tendenciaDispositivo, String versaoRegra,
+            String tipo, String bootId, Long seq) {
+        this(jardimId, sensorId, nivelCm, bateria, timestamp, estado, tendenciaDispositivo,
+                versaoRegra, tipo, bootId, seq, null);
+    }
 }

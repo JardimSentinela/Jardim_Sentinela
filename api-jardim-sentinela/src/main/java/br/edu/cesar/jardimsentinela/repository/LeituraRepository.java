@@ -14,35 +14,36 @@ import br.edu.cesar.jardimsentinela.entity.Leitura;
 public interface LeituraRepository extends JpaRepository<Leitura, Long> {
 
     /**
-     * [SCRUM-20][SW-11] Ordenação opção B (docs/decisoes-tecnicas.md §6.2): chave cronológica
-     * COALESCE(timestampDispositivo, recebidoEm), mais recente primeiro, desempate por id.
+     * [SCRUM-20][SW-11][F1] Ordenação opção B (docs/decisoes-tecnicas.md §6.2): quando
+     * horaSincronizada = false, usa recebidoEm; caso contrário, COALESCE(timestampDispositivo,
+     * recebidoEm), mais recente primeiro, desempate por id.
      */
-    @Query("""
-            select l from Leitura l
-            where l.jardimId = :jardimId
-            order by coalesce(l.timestampDispositivo, l.recebidoEm) desc, l.id desc
-            """)
+    @Query("select l from Leitura l where l.jardimId = :jardimId order by " + CHAVE_CRONOLOGICA + " desc, l.id desc")
     List<Leitura> findHistorico(@Param("jardimId") String jardimId, Pageable pageable);
 
     /**
-     * [SCRUM-20][SW-11] Leitura mais recente de cada jardim numa única query (sem N+1), pela mesma
-     * chave de {@link #findHistorico}: COALESCE(timestampDispositivo, recebidoEm), desempate por id.
-     * Ordenada por jardimId. Jardim sem leitura não aparece.
+     * [SCRUM-20][SW-11][F1][F2] Leitura mais recente elegível (exclui boot) de cada jardim numa
+     * única query (sem N+1), pela mesma chave de {@link #findHistorico}, desempate por id.
+     * Ordenada por jardimId.
      */
     @Query("""
             select l from Leitura l
-            where not exists (
+            where (l.tipo is null or l.tipo <> 'boot')
+              and not exists (
                 select 1 from Leitura o
                 where o.jardimId = l.jardimId
-                  and (coalesce(o.timestampDispositivo, o.recebidoEm) > coalesce(l.timestampDispositivo, l.recebidoEm)
-                       or (coalesce(o.timestampDispositivo, o.recebidoEm) = coalesce(l.timestampDispositivo, l.recebidoEm)
+                  and (o.tipo is null or o.tipo <> 'boot')
+                  and ((case when o.horaSincronizada = false then o.recebidoEm else coalesce(o.timestampDispositivo, o.recebidoEm) end)
+                       > (case when l.horaSincronizada = false then l.recebidoEm else coalesce(l.timestampDispositivo, l.recebidoEm) end)
+                       or ((case when o.horaSincronizada = false then o.recebidoEm else coalesce(o.timestampDispositivo, o.recebidoEm) end)
+                           = (case when l.horaSincronizada = false then l.recebidoEm else coalesce(l.timestampDispositivo, l.recebidoEm) end)
                            and o.id > l.id)))
             order by l.jardimId
             """)
     List<Leitura> findUltimaLeituraDeCadaJardim();
 
     /**
-     * [SCRUM-28][SW-14] Último estado válido de cada jardim (mesma regra de
+     * [SCRUM-28][SW-14][F1] Último estado válido de cada jardim (mesma regra de
      * {@link #findComEstadoElegivel}: elegível, com estado, recebido desde {@code recebidoDesde}),
      * numa única query para a lista não voltar ao N+1.
      */
@@ -54,8 +55,10 @@ public interface LeituraRepository extends JpaRepository<Leitura, Long> {
                 select 1 from Leitura o
                 where o.jardimId = l.jardimId and o.estado is not null
                   and (o.tipo is null or o.tipo <> 'boot') and o.recebidoEm >= :recebidoDesde
-                  and (coalesce(o.timestampDispositivo, o.recebidoEm) > coalesce(l.timestampDispositivo, l.recebidoEm)
-                       or (coalesce(o.timestampDispositivo, o.recebidoEm) = coalesce(l.timestampDispositivo, l.recebidoEm)
+                  and ((case when o.horaSincronizada = false then o.recebidoEm else coalesce(o.timestampDispositivo, o.recebidoEm) end)
+                       > (case when l.horaSincronizada = false then l.recebidoEm else coalesce(l.timestampDispositivo, l.recebidoEm) end)
+                       or ((case when o.horaSincronizada = false then o.recebidoEm else coalesce(o.timestampDispositivo, o.recebidoEm) end)
+                           = (case when l.horaSincronizada = false then l.recebidoEm else coalesce(l.timestampDispositivo, l.recebidoEm) end)
                            and o.id > l.id)))
             """)
     List<Leitura> findUltimoEstadoValidoDeCadaJardim(@Param("recebidoDesde") Instant recebidoDesde);
@@ -82,7 +85,7 @@ public interface LeituraRepository extends JpaRepository<Leitura, Long> {
      * timestampDispositivo e, quando ele falta, recebidoEm. É a mesma regra de
      * CalculadoraTendencia.chaveCronologica (em Java); quem mudar uma muda a outra.
      */
-    String CHAVE_CRONOLOGICA = "coalesce(l.timestampDispositivo, l.recebidoEm)";
+    String CHAVE_CRONOLOGICA = "(case when l.horaSincronizada = false then l.recebidoEm else coalesce(l.timestampDispositivo, l.recebidoEm) end)";
 
     /**
      * [SCRUM-28][SW-14] Elegibilidade para tendência e estado: o registro de inicialização

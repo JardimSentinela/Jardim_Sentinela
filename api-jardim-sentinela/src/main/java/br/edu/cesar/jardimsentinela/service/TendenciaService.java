@@ -109,6 +109,7 @@ public class TendenciaService {
                 leitura.getNivelCm(),
                 leitura.getTimestampDispositivo(),
                 leitura.getRecebidoEm(),
-                leitura.getSensorId());
+                leitura.getSensorId(),
+                leitura.getHoraSincronizada());
     }
 }

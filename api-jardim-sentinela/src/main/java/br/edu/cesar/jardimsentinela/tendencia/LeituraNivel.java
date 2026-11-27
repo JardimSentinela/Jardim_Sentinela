@@ -32,6 +32,10 @@ public record LeituraNivel(
         Double nivelCm,
         Instant timestampDispositivo,
         Instant recebidoEm,
-        String sensorId
+        String sensorId,
+        Boolean horaSincronizada
 ) {
+    public LeituraNivel(Double nivelCm, Instant timestampDispositivo, Instant recebidoEm, String sensorId) {
+        this(nivelCm, timestampDispositivo, recebidoEm, sensorId, null);
+    }
 }

@@ -39,11 +39,15 @@ public final class CalculadoraTendencia {
     }
 
     /**
-     * D7 / contrato 3.4: a chave é o timestampDispositivo e, quando ele falta, o
-     * recebidoEm. Fica num único lugar para a futura unificação com a consulta (D14).
-     * Só é chamada para leituras válidas, que têm ao menos uma das duas datas.
+     * D7 / contrato 3.4 / F1: quando {@code horaSincronizada} é {@code false}, o relógio
+     * do dispositivo é estimado (ex.: após reinício sem NTP) e não serve para ordenar;
+     * usa {@code recebidoEm}. Caso contrário, usa {@code timestampDispositivo} e, quando
+     * ele falta, {@code recebidoEm}.
      */
     public static Instant chaveCronologica(LeituraNivel leitura) {
+        if (Boolean.FALSE.equals(leitura.horaSincronizada()) && leitura.recebidoEm() != null) {
+            return leitura.recebidoEm();
+        }
         return leitura.timestampDispositivo() != null
                 ? leitura.timestampDispositivo()
                 : leitura.recebidoEm();
