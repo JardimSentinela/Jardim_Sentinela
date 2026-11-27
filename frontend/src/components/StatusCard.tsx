@@ -8,6 +8,10 @@ interface StatusCardProps {
   alerta: InformacoesAlerta | null
   loading?: boolean
   className?: string
+  /** Falha ao carregar o estado atual; com dados anteriores, vira aviso de defasagem. */
+  erro?: Error | null
+  /** 404 do detalhe e do histórico: jardim cadastrado, mas ainda sem leitura. */
+  semLeituras?: boolean
   onTentarNovamente?: () => void
 }
 
@@ -35,6 +39,8 @@ export default function StatusCard({
   alerta,
   loading = false,
   className = '',
+  erro = null,
+  semLeituras = false,
   onTentarNovamente,
 }: StatusCardProps) {
   if (loading) {
@@ -42,13 +48,21 @@ export default function StatusCard({
   }
 
   if (!jardim || !alerta) {
+    const titulo = semLeituras ? 'Sem leituras recebidas' : 'Jardim indisponível'
+    const descricao = semLeituras
+      ? 'Este jardim ainda não enviou leituras para a API.'
+      : (erro?.message ?? 'Não foi possível carregar o estado atual deste jardim.')
+
     return (
       <section
+        aria-labelledby="titulo-status-jardim"
         className={`card flex h-full min-h-[280px] flex-col items-center justify-center gap-4 p-4 text-center sm:p-6 ${className}`}
       >
-        <h2 className="text-xl font-bold">Jardim indisponível</h2>
+        <h2 id="titulo-status-jardim" className="text-xl font-bold">
+          {titulo}
+        </h2>
         <p className="max-w-xs text-sm text-[var(--cor-texto-suave)]">
-          Não foi possível carregar o estado atual deste jardim.
+          {descricao}
         </p>
         {onTentarNovamente && (
           <button
@@ -129,6 +143,21 @@ export default function StatusCard({
           </p>
         </div>
       </div>
+
+      {erro && (
+        <div className="mt-6 flex flex-wrap items-center gap-3 text-xs font-medium opacity-90">
+          <span>Última atualização falhou; exibindo o dado anterior.</span>
+          {onTentarNovamente && (
+            <button
+              type="button"
+              onClick={onTentarNovamente}
+              className="rounded-full border border-current px-3 py-1 font-semibold hover:bg-black/10"
+            >
+              Tentar novamente
+            </button>
+          )}
+        </div>
+      )}
     </section>
   )
 }

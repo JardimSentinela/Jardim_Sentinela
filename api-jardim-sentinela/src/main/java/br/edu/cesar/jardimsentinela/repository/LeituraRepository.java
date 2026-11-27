@@ -25,6 +25,16 @@ public interface LeituraRepository extends JpaRepository<Leitura, Long> {
     List<Leitura> findHistorico(@Param("jardimId") String jardimId, Pageable pageable);
 
     /**
+     * [SW-18] Histórico sem registros de inicialização ({@code tipo = boot}), que trazem
+     * nível fictício e não são medição. Usado apenas pelo endpoint de histórico do dashboard
+     * quando {@code incluirBoot=false}; o estado atual continua usando {@link #findHistorico}
+     * para preservar o contrato existente.
+     */
+    @Query("select l from Leitura l where l.jardimId = :jardimId and " + ELEGIVEL
+            + " order by " + CHAVE_CRONOLOGICA + " desc, l.id desc")
+    List<Leitura> findHistoricoSemBoot(@Param("jardimId") String jardimId, Pageable pageable);
+
+    /**
      * [SCRUM-20][SW-11] Leitura mais recente de cada jardim numa única query (sem N+1), pela mesma
      * chave de {@link #findHistorico}: COALESCE(timestampDispositivo, recebidoEm), desempate por id.
      * Ordenada por jardimId. Jardim sem leitura não aparece.

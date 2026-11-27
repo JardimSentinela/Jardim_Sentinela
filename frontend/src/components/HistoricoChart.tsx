@@ -10,8 +10,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { ArrowUp, Check, ChevronDown, Download } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, Download, RefreshCw } from 'lucide-react'
 import RotuloBarra from './RotuloBarra'
+import { calcularDominioEixoY } from './historicoChartUtils'
 import { NIVEL_MAXIMO_JARDIM_CM, formatarDataHora } from '../types/jardim'
 import type { Leitura } from '../types/jardim'
 
@@ -23,6 +24,10 @@ interface HistoricoChartProps {
   className?: string
   /** Cor do estado atual, usada para destacar a leitura mais recente. */
   corDestaque?: string
+  /** Erro retornado pela API ao buscar os dados do jardim ou histórico. */
+  error?: Error | null
+  /** Ação acionada para tentar novamente em caso de falha. */
+  onTentarNovamente?: () => void
 }
 
 interface PontoHistorico {
@@ -35,7 +40,11 @@ interface PontoHistorico {
 const JANELAS = [
   { id: '10', rotulo: 'Últimas 10 leituras', limite: 10 },
   { id: '20', rotulo: 'Últimas 20 leituras', limite: 20 },
-  { id: 'todas', rotulo: 'Todas as leituras', limite: Number.POSITIVE_INFINITY },
+  {
+    id: 'todas',
+    rotulo: 'Todas as leituras carregadas',
+    limite: Number.POSITIVE_INFINITY,
+  },
 ] as const
 
 type JanelaId = (typeof JANELAS)[number]['id']
@@ -52,6 +61,8 @@ export default function HistoricoChart({
   loading = false,
   className = '',
   corDestaque = '#005b7f',
+  error = null,
+  onTentarNovamente,
 }: HistoricoChartProps) {
   const [janela, setJanela] = useState<JanelaId>('20')
   const [menuAberto, setMenuAberto] = useState(false)
@@ -82,7 +93,27 @@ export default function HistoricoChart({
       })
   }, [historico, janelaAtual.limite])
 
+  const maximoPonto = useMemo(
+    () => (pontos.length > 0 ? Math.max(0, ...pontos.map((p) => p.nivelCm)) : 0),
+    [pontos],
+  )
+  const dominioMax = calcularDominioEixoY(maximoPonto)
+
   const larguraMinima = Math.max(620, pontos.length * 64)
+
+  const totalCarregado = historico.length
+  let textoResumo: string
+  if (error && pontos.length === 0) {
+    textoResumo = 'Não foi possível carregar as leituras deste jardim.'
+  } else if (error && pontos.length > 0) {
+    textoResumo = `${pontos.length} leitura(s) em exibição. Última atualização falhou.`
+  } else if (pontos.length === 0) {
+    textoResumo = 'Ainda não há leituras recebidas da API para este jardim.'
+  } else if (pontos.length === totalCarregado) {
+    textoResumo = `${pontos.length} leitura(s) recebida(s) da API, da mais antiga para a mais recente.`
+  } else {
+    textoResumo = `${pontos.length} de ${totalCarregado} leitura(s) carregada(s), da mais antiga para a mais recente.`
+  }
 
   useEffect(() => {
     function aoClicarFora(evento: MouseEvent) {
@@ -139,13 +170,22 @@ export default function HistoricoChart({
             Histórico de Variação do Nível da Água
           </h2>
           <p className="mt-1 text-sm text-[var(--cor-texto-suave)]">
-            {pontos.length > 0
-              ? `${pontos.length} leitura(s) recebida(s) da API, da mais antiga para a mais recente.`
-              : 'Ainda não há leituras recebidas da API para este jardim.'}
+            {textoResumo}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {error && pontos.length > 0 && onTentarNovamente && (
+            <button
+              type="button"
+              onClick={onTentarNovamente}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--cor-borda)] px-3 py-1.5 text-xs font-medium text-[var(--cor-texto)] hover:bg-[var(--cor-superficie-suave)]"
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              Tentar novamente
+            </button>
+          )}
+
           <div className="relative" ref={menuRef}>
             <button
               type="button"
@@ -209,7 +249,25 @@ export default function HistoricoChart({
         </div>
       </div>
 
-      {pontos.length === 0 ? (
+      {error && pontos.length === 0 ? (
+        <div className="mt-6 flex h-[320px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-[#f0b7a1] bg-[#fff4ef]/40 p-4 text-center dark:border-[#7c2d12] dark:bg-[#3b1c12]/20">
+          <p className="text-sm font-semibold text-[#9a3412] dark:text-[#fdba74]">
+            Não foi possível carregar o histórico
+          </p>
+          <p className="max-w-md text-xs text-[var(--cor-texto-suave)]">
+            {error.message}
+          </p>
+          {onTentarNovamente && (
+            <button
+              type="button"
+              onClick={onTentarNovamente}
+              className="mt-1 rounded-full border border-[var(--cor-borda)] bg-[var(--cor-superficie)] px-4 py-1.5 text-xs font-medium text-[var(--cor-texto)] hover:bg-[var(--cor-superficie-suave)]"
+            >
+              Tentar novamente
+            </button>
+          )}
+        </div>
+      ) : pontos.length === 0 ? (
         <div className="mt-6 flex h-[320px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--cor-borda)] text-center">
           <p className="text-sm font-medium text-[var(--cor-texto)]">
             Sem leituras para exibir
@@ -247,8 +305,8 @@ export default function HistoricoChart({
                   />
                   <YAxis
                     width={64}
-                    domain={[0, NIVEL_MAXIMO_JARDIM_CM]}
-                    ticks={TICKS_Y}
+                    domain={[0, dominioMax]}
+                    ticks={dominioMax === NIVEL_MAXIMO_JARDIM_CM ? TICKS_Y : undefined}
                     tickLine={false}
                     axisLine={{ stroke: 'var(--cor-borda)' }}
                     tick={{ fill: 'var(--cor-texto-suave)', fontSize: 11 }}
