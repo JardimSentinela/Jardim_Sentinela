@@ -31,9 +31,12 @@ describe('alertaDoJardim', () => {
     expect(alerta.titulo).toBe('Seco')
   })
 
-  it('deriva a faixa pelo nível quando o registro não tem classificação', () => {
-    const alerta = alertaDoJardim({ nivelCm: 40, estado: null })
-    expect(alerta.nivel).toBe('TRANSBORDANDO')
+  it('deriva a faixa pelo nível quando o registro não tem classificação (limiares 22/45/60)', () => {
+    expect(alertaDoJardim({ nivelCm: 21.9, estado: null }).nivel).toBe('SECO')
+    expect(alertaDoJardim({ nivelCm: 22, estado: null }).nivel).toBe('ENCHENDO')
+    expect(alertaDoJardim({ nivelCm: 45, estado: null }).nivel).toBe('TRANSBORDANDO')
+    expect(alertaDoJardim({ nivelCm: 50, estado: null }).nivel).toBe('TRANSBORDANDO')
+    expect(alertaDoJardim({ nivelCm: 60, estado: null }).nivel).toBe('ALAGADO')
   })
 })
 
