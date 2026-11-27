@@ -3,7 +3,7 @@
 > **Card:** [SCRUM-19] [SW-01] Definir contrato de telemetria
 > **Pai:** Estruturar a frente de Arquitetura
 > **Sprint:** SCRUM Sprint 1 (revisado na Sprint 2: SCRUM-43 [SW-09], SCRUM-44 [SW-10])
-> **Última revisão:** 2026-11-14
+> **Última revisão:** 2026-11-27
 
 ## Por que este documento existe
 
@@ -23,7 +23,7 @@ se algo aqui mudar, muda em todos os lugares ao mesmo tempo.
 > **Há duas coisas diferentes neste documento.** A seção 1 descreve o **payload
 > da API** (`POST /api/leituras`, implementado). A seção 2 descreve o **que o
 > ESP32 grava no arquivo `/fila.ndjson`**. As duas são formatos diferentes: o
-> arquivo do firmware tem campos extras que a API recebe e ignora (ver 3.3).
+> arquivo do firmware tem campos extras que a API lê ou ignora (ver 3.3).
 > O estado das decisões está na seção 3; **o que está marcado como pendente
 > ainda não é comportamento da API**.
 
@@ -48,13 +48,14 @@ Um objeto JSON por leitura. Firmware e simulador enviam o **mesmo payload** ao
 | `timestamp`                  | —                   | string           | ISO-8601 em UTC  | **não**     | data/hora ISO-8601 válida | `"2026-11-12T12:00:00Z"` |
 
 - Campos opcionais [SCRUM-28][SW-14]: `tipo` (`evento`|`snapshot`|`boot`), `bootId`
-  (8 hex) e `seq` (inteiro >= 0, até 4294967295). São validados quando presentes e
-  guardados (não aparecem nas respostas). `tipo: "boot"` não entra na tendência nem no
-  estado. `bootId`+`seq` identificam a leitura (idempotência); sem eles vale
-  `jardimId + sensorId + timestamp`, como antes. Registros sem esses campos (simulador,
-  antigos) continuam aceitos e elegíveis.
-- Campos desconhecidos (`deltaTMs`, `horaSincronizada`, `lat`, `lon`) são **aceitos e
-  descartados** (ver 3.3).
+  (8 hex), `seq` (inteiro >= 0, até 4294967295) e `horaSincronizada` (booleano, [F1]).
+  São validados quando presentes e guardados (não aparecem nas respostas).
+  `tipo: "boot"` não entra na tendência nem no estado. `bootId`+`seq` identificam a
+  leitura (idempotência); sem eles vale `jardimId + sensorId + timestamp`, como antes.
+  Registros sem esses campos (simulador, antigos) continuam aceitos e elegíveis.
+  Quando `horaSincronizada = false`, a API ordena a leitura por `recebidoEm` (ver 3.4).
+- Campos ainda desconhecidos (`deltaTMs`, `lat`, `lon`) são **aceitos e descartados**
+  (ver 3.3).
 - O **nome oficial** do campo (`idJardim` × `jardimId`, etc.) não está fechado
   (ver 3.1). Enquanto isso, os dois nomes valem.
 
@@ -243,6 +244,8 @@ Consequências para quem lê:
 | 2026-11-14 | Histórico e estado atual ordenam por `timestampDispositivo`, com `recebidoEm` quando for nulo (opção B, ver 3.4) | decidido; implementado (SW-11) |
 | 2026-11-14 | Formato do id definido (`J01`, `S01`, `jardim`); **validação na API só depois** da migração do firmware (ver 1.6) | decidido; implementado (SW-11) |
 | 2026-11-14 | Em payloads novos de requisição, usar `idJardim`/`idSensor`/`nivelAgua`/`timestamp` (ver dicionário, regra 4) | decidido (a comunicar ao time) |
+| 2026-11-26 | `horaSincronizada = false` ordena por `recebidoEm` (F1); `tipo = boot` não é leitura atual (F2) | implementado |
+| 2026-11-27 | `incluirBoot` no histórico (padrão `true`); dashboard usa `false` (PR #33) | implementado |
 
 ### 3.1 Nomes de campo: firmware × nome interno da API — ponte mantida por ora
 
@@ -263,25 +266,23 @@ decisão é manter assim por ora. Registrar também o estado por sensor continua
 **em aberto**. O significado físico da medição (como a sonda calcula o cm) deve
 ser **confirmado com o time de hardware**.
 
-### 3.3 Campos do firmware que a API ignora
+### 3.3 Campos do firmware: o que a API lê e o que ainda ignora
 
-> **Atualização [SCRUM-28][SW-14]:** `tipo`, `bootId` e `seq` passaram a ser lidos
-> (ver 1.1). Falta decidir a detecção de **perda** (buraco em `seq`) e o uso de
-> `horaSincronizada`. O texto abaixo vale para o que continua ignorado.
+> **Atualização [SCRUM-28][SW-14] + [F1]:** `tipo`, `bootId`, `seq` e `horaSincronizada` passaram a
+> ser lidos (ver 1.1 e 3.4). Falta decidir a detecção explícita de **perda** (buraco em `seq`). O
+> texto abaixo vale para o que continua ignorado.
 
-`tipo`, `seq`, `bootId`, `deltaTMs`, `horaSincronizada`, `lat` e `lon` eram
-desconhecidos para o DTO e **ignorados em silêncio** (o Jackson 3 do Spring
-Boot 4 desliga `FAIL_ON_UNKNOWN_PROPERTIES` por padrão): o dado é aceito e
-descartado. `bootId`/`seq` agora existem em `develop` (a PR #14 foi mergeada).
-Falta decidir se a API passa a **usar** esses campos para:
+`deltaTMs`, `lat` e `lon` são desconhecidos para o DTO e **ignorados em silêncio** (o Jackson 3 do
+Spring Boot 4 desliga `FAIL_ON_UNKNOWN_PROPERTIES` por padrão): o dado é aceito e descartado.
 
-- detectar **perda** (buraco em `seq`) e **retransmissão** (mesmo `bootId` e
-  `seq`) — mais robusto que o `timestamp`, que depende do relógio do ESP32;
-- distinguir `evento`, `snapshot` e `boot`;
-- confiar no `timestamp` do dispositivo só quando `horaSincronizada` for `true`.
+`tipo`, `bootId`, `seq` e `horaSincronizada` agora existem no DTO e são persistidos. Com `bootId` e
+`seq` a idempotência usa `idJardim` + `bootId` + `seq`; sem eles, `idJardim` + `idSensor` +
+`timestamp` (1.4). `tipo = boot` não entra na tendência, no estado nem na leitura atual (F2), e
+`horaSincronizada = false` faz a ordenação usar `recebidoEm` (F1, ver 3.4).
 
-Atualizado [SCRUM-28][SW-14]: com `bootId` e `seq` a idempotência usa `idJardim` + `bootId` + `seq`;
-sem eles, `idJardim` + `idSensor` + `timestamp` (1.4).
+Continua em aberto:
+- detectar **perda** (buraco em `seq`) de forma explícita, além da idempotência já implementada;
+- distinguir `evento`, `snapshot` e `boot` em relatórios e consultas além da exclusão do boot.
 
 ### 3.4 Qual hora manda — decidido e implementado: opção B
 
@@ -298,13 +299,19 @@ Nesse caso:
 | Opção | Ordenação                                                        | Risco                                              |
 | ----- | ---------------------------------------------------------------- | -------------------------------------------------- |
 | A     | `recebidoEm` (como hoje)                                         | Errada após reconexão                              |
-| B     | `timestampDispositivo`, com `recebidoEm` quando for nulo         | Relógio do dispositivo errado (`horaSincronizada:false` hoje usa hora estimada) |
+| B     | `timestampDispositivo`, com `recebidoEm` quando for nulo         | Relógio do dispositivo errado; mitigado usando `recebidoEm` quando `horaSincronizada = false` |
 | C     | A API devolve as duas; o dashboard escolhe                       | Empurra a decisão para o front                     |
 
 **Decisão (2026-11-14): opção B.** Histórico e "estado atual" passam a ordenar
 por `timestampDispositivo`, usando `recebidoEm` quando ele for nulo. **Implementado
-na SW-11** (histórico, estado atual e tendência ordenam pela mesma chave). Em aberto: tratar
-`horaSincronizada:false` (hora estimada) como hora não confiável.
+na SW-11** (histórico, estado atual e tendência ordenam pela mesma chave).
+
+**F1 corrigido (26/11/2026):** quando `horaSincronizada = false`, a ordenação usa `recebidoEm` (hora
+estimada não é confiável). Implementado em `LeituraRepository.CHAVE_CRONOLOGICA` e em
+`CalculadoraTendencia.chaveCronologica`, com regressão em `DivergenciasF1F2Tests`.
+
+**F2 corrigido (26/11/2026):** registros `tipo = boot` não são a leitura atual do detalhe nem da
+lista (`JardimService.buscarJardim` e `LeituraRepository.findUltimaLeituraDeCadaJardim`).
 
 ---
 
