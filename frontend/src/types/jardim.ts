@@ -95,16 +95,16 @@ export interface DadosCOP {
 export const NIVEL_MAXIMO_JARDIM_CM = 50
 
 /**
- * Faixas de alerta do protótipo, proporcionais à capacidade de 50 cm:
- * - SECO: menos de 15 cm (até 30% da capacidade);
- * - ENCHENDO: de 15 cm a menos de 30 cm (30% a 60%);
- * - TRANSBORDANDO: de 30 cm a menos de 45 cm (60% a 90%);
- * - ALAGADO: 45 cm ou mais (a partir de 90% da capacidade).
+ * Faixas de alerta alinhadas ao firmware (`esp32/src/modulos/estado_fisico.h`):
+ * - SECO (`NORMAL`): menos de 22 cm;
+ * - ENCHENDO: de 22 cm a menos de 45 cm;
+ * - TRANSBORDANDO: de 45 cm a menos de 60 cm;
+ * - ALAGADO: 60 cm ou mais.
  */
 export const LIMITES_ALERTA_CM = {
-  enchendo: 15,
-  transbordando: 30,
-  alagado: 45,
+  enchendo: 22,
+  transbordando: 45,
+  alagado: 60,
 } as const
 
 const INFORMACOES_POR_NIVEL: Record<NivelAlerta, Omit<InformacoesAlerta, 'nivel'>> = {

@@ -46,7 +46,9 @@ public class JardimService {
      * Vazio se o jardim nunca enviou dados.
      */
     public Optional<JardimResponse> buscarJardim(String jardimId) {
-        return leituraRepository.findHistorico(jardimId, PageRequest.of(0, 1)).stream().findFirst()
+        return leituraRepository.findHistoricoPorChaveCronologica(jardimId, PageRequest.of(0, 1))
+                .stream().findFirst()
+                .or(() -> leituraRepository.findHistorico(jardimId, PageRequest.of(0, 1)).stream().findFirst())
                 .map(ultima -> JardimResponse.de(ultima, leituraRepository.countByJardimId(jardimId),
                         estadoValido(ultima, jardimId),
                         tendenciaService.calcularTendencia(jardimId)

@@ -29,13 +29,10 @@ Tenório Calado.
 | Item | Onde | Quem decide (segundo os PRs/relatórios) |
 |---|---|---|
 | Limiares do estado físico (22/45/60 cm) e histerese de 2 cm | §3, §3.1 | grupo |
-| **F3** — firmware (22/45/60) × frontend (15/30/45) | §3.2 | grupo; a Larissa se ofereceu para alinhar o frontend ao firmware |
 | Padrão sonoro e piscar do ALAGADO | §4.1, §4.2 | grupo |
 | Regra do som em `TRANSBORDANDO` + tendência `INSUFICIENTE` | §4.3 | grupo (relatório da Tarefa C, §5.2.1) |
 | Janela, tolerância e idade máxima da tendência | §5.2 | revisar com dados de campo |
 | Relógio da tendência no firmware: `tMs` do boot × `timestamp` absoluto | §5.2 | grupo |
-| **F1** — leitura com horário estimado após reinício | §6.2 | equipe da API |
-| **F2** — registro `boot` (0 cm) como "leitura atual" | §6.2 | equipe da API |
 | Estado vindo da sonda HW-02 (T1592 só valida protocolo) | §8 | grupo confirmar |
 | Drenagem lenta: expor na API? Eventos T1592 entram? (**issue #29**) | Anexo A | grupo |
 
@@ -69,16 +66,17 @@ Tenório Calado.
 - **Fonte:** `estado_fisico.h` (`FOLGA_HISTERESE_CM = 2.0`).
 - **Status:** **A confirmar** (o código diz "a confirmar").
 
-### §3.2 Divergência com o frontend (F3) — registro, não decisão
+### §3.2 Alinhamento com o frontend (F3) — resolvido
 
-O frontend, quando a API devolve `estado: null`, calcula o estado com **outras faixas**
-(15/30/45 cm, `calcularStatusAlerta()` em `frontend/src/types/jardim.ts`). O simulador **nunca envia
-`estado`**, então, numa demonstração com simulador, o dashboard mostra o estado do frontend, não o do
-firmware. Exemplo verificado em 26/11/2026: 50 cm aparece "Alagado" no dashboard; o firmware
-classificaria 50 cm como `TRANSBORDANDO` (o `ALAGADO` só começa em 60).
+O frontend, quando a API devolve `estado: null`, calcula o estado com `calcularStatusAlerta()` em
+`frontend/src/types/jardim.ts`. Antes, usava faixas diferentes do firmware (15/30/45 cm); a partir de
+26/11/2026 usa as **mesmas faixas** (22/45/60 cm), com o `NORMAL` do firmware mapeado para `SECO` no
+dashboard. Quando o firmware envia `estado`, ele continua tendo prioridade sobre o cálculo local.
 
-- **Fonte:** `docs/relatorio-integracao-sw12.md` (F3, PR #32, ainda aberto) e ensaio de 26/11/2026.
-- **Status:** **Em aberto.** Nenhuma das duas tabelas foi escolhida como a oficial.
+- **Fonte:** `frontend/src/types/jardim.ts` (`LIMITES_ALERTA_CM`), `frontend/src/types/jardim.test.ts`;
+  `esp32/src/modulos/estado_fisico.h`; ensaio de 26/11/2026.
+- **Status:** **Em vigor.** A divergência F3 foi corrigida na
+  `docs/SCRUM-39-correcoes-roteiro-e-relatorio`.
 
 ---
 
@@ -182,15 +180,16 @@ nem alerta oficial; o padrão nunca é contínuo, para ser distinto de qualquer 
 ### §6.2 Ordenação cronológica (opção B)
 - Histórico, estado atual e tendência ordenam por `COALESCE(timestampDispositivo, recebidoEm)`,
   do mais recente para o mais antigo, com desempate por `id` decrescente.
+- **[F1] Exceção:** quando `horaSincronizada = false`, a chave passa a ser `recebidoEm`, porque o
+  `timestampDispositivo` é estimado e não serve para ordenar.
 - Em `GET /api/jardins` a lista usa a mesma regra, em 2 consultas fixas (sem N+1).
-- **Fonte:** `LeituraRepository.java`; `JardimOrdenacaoTests`.
-- **Status:** **Em vigor.** Dois pontos em aberto, ambos reproduzidos pelo smoke test do SW-12
-  (`docs/relatorio-integracao-sw12.md`):
-  - **F1:** após um reinício com horário **não sincronizado** (`horaSincronizada: false`), a leitura
-    nova pode ter timestamp mais antigo que a do boot anterior, e o detalhe mostra a leitura antiga.
-    O contrato registra "em aberto: tratar `horaSincronizada:false`".
-  - **F2:** um registro `tipo=boot` (nível fictício 0 cm) com o timestamp mais novo vira a "leitura
-    atual" no detalhe e na lista. O `boot` **já** fica fora da tendência e do campo `estado`.
+- **[F2] Registros `tipo = boot`** não são a leitura atual do detalhe nem da lista. Se o jardim só
+  tiver `boot`, o detalhe ainda o mostra como fallback; a lista não exibe o jardim.
+- **Fonte:** `LeituraRepository.java` (`CHAVE_CRONOLOGICA`); `DivergenciasF1F2Tests`;
+  `JardimOrdenacaoTests`.
+- **Status:** **Em vigor (F1 e F2 corrigidos em 26/11/2026).** Os dois problemas foram reproduzidos
+  pelo smoke test do SW-12 (`docs/relatorio-integracao-sw12.md`) e corrigidos na
+  `docs/SCRUM-39-correcoes-roteiro-e-relatorio`.
 
 ### §6.3 Campos opcionais gravados como vieram
 - `estado`, `tendenciaDispositivo`, `versaoRegra`, `tipo` (`evento|snapshot|boot`), `bootId` (**8
@@ -249,11 +248,12 @@ nem alerta oficial; o padrão nunca é contínuo, para ser distinto de qualquer 
 - **Status:** **Em vigor.**
 
 ### A.3 Histórico sem `boot` para o dashboard (SW-18)
-- O PR #33 (**ainda aberto, não está na `develop`**) propõe `incluirBoot` no
+- Implementado pelo PR #33 (mergeado na `develop` em 27/11/2026): `incluirBoot` no
   `GET /api/jardins/{id}/leituras` (padrão `true`, para não mudar o contrato) e o dashboard passa
-  `false`, para o gráfico e o CSV não mostrarem o 0 cm fictício do boot. O detalhe e a lista **não**
-  mudam (isso é o F2).
-- **Status:** **Proposto.** Entra neste documento como decisão quando o PR for mergeado.
+  `false`, para o gráfico e o CSV não mostrarem o 0 cm fictício do boot.
+- O detalhe e a lista **não** dependem desse parâmetro; a exclusão do boot como leitura atual é o F2
+  (§6.2).
+- **Status:** **Em vigor.**
 
 ---
 
@@ -262,3 +262,4 @@ nem alerta oficial; o padrão nunca é contínuo, para ser distinto de qualquer 
 | Data | O que mudou |
 |---|---|
 | 26/11/2026 | Reconstrução a partir do repositório (código, testes e docs) porque o original nunca foi versionado. Pendente de revisão do grupo e de comparação com o original, se ele existir. |
+| 27/11/2026 | F1, F2 e F3 marcados como resolvidos; `horaSincronizada` passa a ser persistido e usado na ordenação; PR #33 (`incluirBoot`) mergeado na `develop`. |
