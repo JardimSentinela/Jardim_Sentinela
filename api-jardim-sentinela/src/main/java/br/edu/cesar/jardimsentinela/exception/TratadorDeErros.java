@@ -12,10 +12,11 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-
-//Padroniza as respostas de erro da API.
-//Forrmato definido em docs/contrato-telemetria.md (SCRUM-22).
- 
+// Padroniza as respostas de erro da API.
+// Formato definido em docs/contrato-telemetria.md (SCRUM-22).
+// [SCRUM-44][SW-10] Trazido de main para develop: esta classe já existia na
+// PR#11 (ArthurVFT), mergeada direto em main sem passar por develop. Conteúdo
+// idêntico ao de main; só a origem no changelog muda.
 @RestControllerAdvice
 public class TratadorDeErros {
 
@@ -41,6 +42,16 @@ public class TratadorDeErros {
                 "PAYLOAD_INVALIDO",
                 "Um ou mais campos não passaram na validação.",
                 campos,
+                Instant.now()));
+    }
+
+    @ExceptionHandler(JardimNaoEncontradoException.class)
+    public ResponseEntity<ErroResposta> jardimNaoEncontrado(JardimNaoEncontradoException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(new ErroResposta(
+                HttpStatus.NOT_FOUND.value(),
+                "JARDIM_NAO_ENCONTRADO",
+                ex.getMessage(),
+                List.of(),
                 Instant.now()));
     }
 

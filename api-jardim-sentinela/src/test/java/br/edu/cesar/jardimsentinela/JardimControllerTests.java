@@ -1,0 +1,130 @@
+package br.edu.cesar.jardimsentinela;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.time.Instant;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import br.edu.cesar.jardimsentinela.entity.Leitura;
+import br.edu.cesar.jardimsentinela.repository.LeituraRepository;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+class JardimControllerTests {
+
+    @Autowired
+    MockMvc mvc;
+
+    @Autowired
+    LeituraRepository repository;
+
+    @BeforeEach
+    void limpar() {
+        repository.deleteAll();
+    }
+
+    private int sequencia;
+
+    /** Cada envio usa um timestamp distinto: o mesmo jardim+sensor+timestamp é tratado como reenvio. */
+    private void enviar(String jardimId, double nivelCm, int bateria) throws Exception {
+        String timestamp = Instant.parse("2026-11-12T12:00:00Z").plusSeconds(sequencia++).toString();
+        mvc.perform(post("/api/leituras")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"idJardim":"%s","idSensor":"S-%s","nivelAgua":%s,
+                         "bateria":%d,"timestamp":"%s"}
+                        """.formatted(jardimId, jardimId, nivelCm, bateria, timestamp)))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void jardimRetornaUltimaLeituraETotal() throws Exception {
+        enviar("J01", 10.0, 90);
+        enviar("J01", 22.5, 89);
+        enviar("J02", 5.0, 70);
+
+        mvc.perform(get("/api/jardins/J01"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jardimId").value("J01"))
+                .andExpect(jsonPath("$.nivelCm").value(22.5))
+                .andExpect(jsonPath("$.bateria").value(89))
+                .andExpect(jsonPath("$.totalLeituras").value(2));
+    }
+
+    @Test
+    void jardimInexistenteRetorna404() throws Exception {
+        mvc.perform(get("/api/jardins/J99"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.erro").value("JARDIM_NAO_ENCONTRADO"))
+                .andExpect(jsonPath("$.campos.length()").value(0));
+        mvc.perform(get("/api/jardins/J99/leituras"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.erro").value("JARDIM_NAO_ENCONTRADO"));
+    }
+
+    @Test
+    void historicoVemDoMaisRecenteParaOMaisAntigoEFiltraPorJardim() throws Exception {
+        enviar("J01", 1.0, 90);
+        enviar("J01", 2.0, 90);
+        enviar("J01", 3.0, 90);
+        enviar("J02", 99.0, 90);
+
+        mvc.perform(get("/api/jardins/J01/leituras"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[0].nivelCm").value(3.0))
+                .andExpect(jsonPath("$[2].nivelCm").value(1.0));
+    }
+
+    @Test
+    void historicoRespeitaLimite() throws Exception {
+        enviar("J01", 1.0, 90);
+        enviar("J01", 2.0, 90);
+        enviar("J01", 3.0, 90);
+
+        mvc.perform(get("/api/jardins/J01/leituras").param("limite", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].nivelCm").value(3.0));
+    }
+
+    @Test
+    void historicoIncluiBootPorPadraoEExcluiQuandoSolicitado() throws Exception {
+        Instant base = Instant.parse("2026-11-12T12:00:00Z");
+        repository.save(new Leitura("J01", "S01", 0.0, 100, base, base,
+                null, null, null, "boot", "B1", 0L));
+        repository.save(new Leitura("J01", "S01", 24.0, 99, base.plusSeconds(10),
+                base.plusSeconds(10), "ENCHENDO", "SUBINDO", "v1", "snapshot", "B1", 1L));
+
+        mvc.perform(get("/api/jardins/J01/leituras"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+
+        mvc.perform(get("/api/jardins/J01/leituras").param("incluirBoot", "false"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].nivelCm").value(24.0));
+    }
+
+    @Test
+    void historicoSoComBootRespondeListaVaziaQuandoBootEhExcluido() throws Exception {
+        Instant base = Instant.parse("2026-11-12T12:00:00Z");
+        repository.save(new Leitura("J01", "S01", 0.0, 100, base, base,
+                null, null, null, "boot", "B1", 0L));
+
+        mvc.perform(get("/api/jardins/J01/leituras").param("incluirBoot", "false"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+}

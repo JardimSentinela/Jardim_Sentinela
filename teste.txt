@@ -1,1 +1,0 @@
-arquivo teste para verificar se a integração com o jira esta funcionandos

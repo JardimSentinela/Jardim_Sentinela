@@ -1,0 +1,107 @@
+package br.edu.cesar.jardimsentinela;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
+import org.springframework.test.web.servlet.MockMvc;
+
+/**
+ * [SCRUM-20][SW-11] Escrito ANTES de WebConfig.java existir (ciclo TDD):
+ * sem CORS configurado, a API não manda nenhum cabeçalho Access-Control-*,
+ * então as duas asserções abaixo devem falhar (RED). Depois que WebConfig.java
+ * registra o CorsRegistry, devem passar (GREEN).
+ *
+ * [Dado a verificar] Não executei este teste — não compilo no ambiente onde
+ * preparei isso. A lógica de preflight do Spring pode ter mudado no Spring
+ * Framework 7 (base do Boot 4.1.1); por isso as asserções são propositalmente
+ * fracas (existência do cabeçalho, não o valor exato).
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class WebConfigCorsTests {
+
+    @Autowired
+    MockMvc mvc;
+
+    @Test
+    void respostaDeLeiturasIncluiCabecalhoCorsQuandoOrigemEInformada() throws Exception {
+        // Requisição "simples" (GET) com Origin: o navegador não manda preflight
+        // pra isso, mas espera o cabeçalho de volta pra liberar a leitura da resposta.
+        mvc.perform(get("/api/leituras").header(HttpHeaders.ORIGIN, "http://localhost:5173"))
+                .andExpect(status().isOk())
+                .andExpect(header().exists(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
+    }
+
+    @Test
+    void preflightParaPostEmLeiturasLiberaOMetodo() throws Exception {
+        // Preflight: o que o navegador manda ANTES de um POST "não simples"
+        // (com Content-Type: application/json) de outra origem.
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST"))
+                .andExpect(status().isOk())
+                .andExpect(header().exists(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS));
+    }
+
+    // [SCRUM-20][SW-11] Headers permitidos explícitos (sem "*"): só os que o dashboard usa.
+
+    @Test
+    void preflightLiberaApenasContentTypeEAccept() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type, accept"))
+                .andExpect(status().isOk())
+                .andExpect(header().exists(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS));
+    }
+
+    @Test
+    void preflightComHeaderNaoListadoERecusado() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:5173")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "x-qualquer-coisa"))
+                .andExpect(status().isForbidden());
+    }
+
+    // [SCRUM-20][SW-11] Lista fechada de origens (decisões §6.6), sem "*".
+
+    @Test
+    void origemPermitidaRecebeSuaPropriaOrigemNoCabecalho() throws Exception {
+        for (String origem : new String[] {"http://localhost:5173", "http://localhost:4173"}) {
+            mvc.perform(get("/api/leituras").header(HttpHeaders.ORIGIN, origem))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origem));
+        }
+    }
+
+    @Test
+    void preflightDeOrigemPermitidaRetornaOrigemEspecifica() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:4173")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:4173"));
+    }
+
+    @Test
+    void origemNaoPermitidaNaoRecebeCabecalhoCors() throws Exception {
+        mvc.perform(get("/api/leituras").header(HttpHeaders.ORIGIN, "http://site-malicioso.example"))
+                .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
+    }
+
+    @Test
+    void preflightDeOrigemNaoPermitidaNaoRecebeCabecalhoCors() throws Exception {
+        mvc.perform(options("/api/leituras")
+                        .header(HttpHeaders.ORIGIN, "http://site-malicioso.example")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST"))
+                .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
+    }
+}
